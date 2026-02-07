@@ -1,0 +1,7 @@
+{
+  "name": "Gestão de Turmas SFK",
+  "description": "Sistema profissional de gestão de turmas e frequências esportivas com integração para Google Sheets, focado em facilidade de uso para professores e relatórios detalhados para gestores.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
