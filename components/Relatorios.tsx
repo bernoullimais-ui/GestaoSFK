@@ -57,7 +57,7 @@ import {
   Area,
   ComposedChart
 } from 'recharts';
-import { Aluno, Turma, Presenca, Matricula, AulaExperimental } from '../types';
+import { Aluno, Turma, Presenca, Matricula, AulaExperimental, Usuario } from '../types';
 
 interface RelatoriosProps {
   alunos: Aluno[];
@@ -327,6 +327,106 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     setTimeout(() => setShowExportSuccess(false), 3000);
   };
 
+  const biFreqData = useMemo(() => {
+    const turmaStats: Record<string, { t: number, p: number }> = {};
+    presencas.forEach(p => {
+      if (!turmaStats[p.turmaId]) turmaStats[p.turmaId] = { t: 0, p: 0 };
+      turmaStats[p.turmaId].t++;
+      if (p.status === 'Presente') turmaStats[p.turmaId].p++;
+    });
+    
+    return Object.entries(turmaStats)
+      .map(([name, val]) => ({ 
+        name: turmas.find(t => t.id === name)?.nome || name, 
+        value: Math.round((val.p / val.t) * 100),
+        raw: val.t
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [presencas, turmas]);
+
+  const monthlyTrend = useMemo(() => {
+    const months: Record<string, { t: number, p: number }> = {};
+    const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    
+    presencas.forEach(p => {
+      const date = parseToDate(p.data);
+      if (date) {
+        const key = `${date.getFullYear()}-${String(date.getMonth()).padStart(2, '0')}`;
+        if (!months[key]) months[key] = { t: 0, p: 0 };
+        months[key].t++;
+        if (p.status === 'Presente') months[key].p++;
+      }
+    });
+
+    return Object.entries(months)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, val]) => {
+        const [year, month] = key.split('-');
+        return {
+          month: `${monthNames[parseInt(month)]}/${year.slice(-2)}`,
+          frequencia: Math.round((val.p / val.t) * 100)
+        };
+      }).slice(-6);
+  }, [presencas]);
+
+  const biConversaoData = useMemo(() => {
+    const total = experimentais.length;
+    const presentes = experimentais.filter(e => e.status === 'Presente').length;
+    const followUps = experimentais.filter(e => e.followUpSent && e.status === 'Presente').length;
+    const matriculados = experimentais.filter(e => e.convertido).length;
+
+    const funnelData = [
+      { name: 'Agendados', value: total, fill: '#8b5cf6' },
+      { name: 'Presentes', value: presentes, fill: '#6366f1' },
+      { name: 'Follow-ups', value: followUps, fill: '#3b82f6' },
+      { name: 'Matrículas', value: matriculados, fill: '#10b981' }
+    ];
+
+    const cursosMap: Record<string, { t: number, c: number }> = {};
+    experimentais.forEach(e => {
+      if (!cursosMap[e.curso]) cursosMap[e.curso] = { t: 0, c: 0 };
+      cursosMap[e.curso].t++;
+      if (e.convertido) cursosMap[e.curso].c++;
+    });
+
+    const porCurso = Object.entries(cursosMap)
+      .map(([name, val]) => ({
+        name,
+        total: val.t,
+        convertidos: val.c,
+        taxa: val.t > 0 ? Math.round((val.c / val.t) * 100) : 0
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+
+    const tendMap: Record<string, { a: number, c: number }> = {};
+    const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    
+    experimentais.forEach(e => {
+      const date = parseToDate(e.aula);
+      if (date) {
+        const key = `${date.getFullYear()}-${String(date.getMonth()).padStart(2, '0')}`;
+        if (!tendMap[key]) tendMap[key] = { a: 0, c: 0 };
+        tendMap[key].a++;
+        if (e.convertido) tendMap[key].c++;
+      }
+    });
+
+    const tendencia = Object.entries(tendMap)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, val]) => {
+        const [year, month] = key.split('-');
+        return {
+          month: `${monthNames[parseInt(month)]}/${year.slice(-2)}`,
+          agendados: val.a,
+          matriculas: val.c
+        };
+      }).slice(-6);
+
+    return { funnelData, porCurso, tendencia, total, presentes, matriculados };
+  }, [experimentais]);
+
   return (
     <div className="space-y-6 pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -342,6 +442,188 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
           <Download className="w-5 h-5" /> Exportar Dados
         </button>
       </div>
+
+      {activeTab === 'bi' && (
+        <div className="space-y-6 animate-in fade-in duration-500">
+          <div className="flex bg-slate-100 p-1 rounded-2xl w-fit">
+            <button 
+              onClick={() => setBiSubTab('frequencia')} 
+              className={`px-6 py-2 text-[10px] font-black uppercase rounded-xl transition-all flex items-center gap-2 ${biSubTab === 'frequencia' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+            >
+              <Activity className="w-4 h-4" /> BI Frequência
+            </button>
+            <button 
+              onClick={() => setBiSubTab('conversao')} 
+              className={`px-6 py-2 text-[10px] font-black uppercase rounded-xl transition-all flex items-center gap-2 ${biSubTab === 'conversao' ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-400'}`}
+            >
+              <Target className="w-4 h-4" /> BI Conversão
+            </button>
+          </div>
+
+          {biSubTab === 'frequencia' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <BarChartIcon className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Top Frequência por Turma</h3>
+                </div>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                      <ReBarChart data={biFreqData} margin={{ top: 20, right: 30, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          cursor={{ fill: '#f8fafc' }}
+                        />
+                        <Bar dataKey="value" name="% Frequência" radius={[8, 8, 0, 0]}>
+                          {biFreqData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Bar>
+                      </ReBarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Tendência Mensal Geral</h3>
+                </div>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={monthlyTrend} margin={{ top: 20, right: 30, left: -20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorFreq" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Area type="monotone" dataKey="frequencia" name="Frequência %" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorFreq)" />
+                      </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-8 animate-in slide-in-from-right-4 duration-500">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Agendamentos</p>
+                  <p className="text-3xl font-black text-slate-900 mt-1">{biConversaoData.total}</p>
+                  <div className="flex items-center gap-1 mt-2 text-purple-600 font-bold text-xs">
+                    <FlaskConical className="w-3 h-3" /> Total Bruto
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxa Comparecimento</p>
+                  <p className="text-3xl font-black text-blue-600 mt-1">
+                    {biConversaoData.total > 0 ? Math.round((biConversaoData.presentes / biConversaoData.total) * 100) : 0}%
+                  </p>
+                  <div className="flex items-center gap-1 mt-2 text-blue-600 font-bold text-xs">
+                    <Users className="w-3 h-3" /> {biConversaoData.presentes} Estudantes
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Conversão Real</p>
+                  <p className="text-3xl font-black text-emerald-600 mt-1">
+                    {biConversaoData.presentes > 0 ? Math.round((biConversaoData.matriculados / biConversaoData.presentes) * 100) : 0}%
+                  </p>
+                  <div className="flex items-center gap-1 mt-2 text-emerald-600 font-bold text-xs">
+                    <UserCheck className="w-3 h-3" /> {biConversaoData.matriculados} Matrículas
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">CAC Experimental</p>
+                  <p className="text-3xl font-black text-slate-400 mt-1">--</p>
+                  <div className="flex items-center gap-1 mt-2 text-slate-400 font-bold text-[10px] uppercase">
+                    Custo por Matrícula
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                      <Layers className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Funil de Conversão</h3>
+                  </div>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ReBarChart layout="vertical" data={biConversaoData.funnelData} margin={{ left: 20, right: 40 }}>
+                        <XAxis type="number" hide />
+                        <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }} />
+                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '16px', border: 'none' }} />
+                        <Bar dataKey="value" radius={[0, 10, 10, 0]} barSize={40}>
+                           <LabelList dataKey="value" position="right" style={{ fontSize: 12, fontWeight: 900, fill: '#1e293b' }} />
+                        </Bar>
+                      </ReBarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Agendamentos vs Matrículas</h3>
+                  </div>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={biConversaoData.tendencia}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fontWeight: 800, fill: '#94a3b8' }} />
+                        <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} />
+                        <Area type="monotone" dataKey="agendados" fill="#8b5cf6" fillOpacity={0.05} stroke="#8b5cf6" strokeWidth={2} />
+                        <Bar dataKey="matriculas" barSize={20} fill="#10b981" radius={[4, 4, 0, 0]} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-2 bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
+                   <div className="flex items-center gap-3 mb-8">
+                      <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                        <MousePointerClick className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Conversão por Modalidade (Ranking)</h3>
+                   </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {biConversaoData.porCurso.map((item, i) => (
+                        <div key={i} className="p-5 bg-slate-50 rounded-3xl border border-slate-100 group hover:border-purple-200 transition-all">
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">{item.name}</p>
+                           <div className="flex items-end justify-between mt-2">
+                              <p className="text-2xl font-black text-slate-900">{item.taxa}%</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">{item.convertidos}/{item.total} Matriculados</p>
+                           </div>
+                           <div className="w-full bg-slate-200 h-1.5 rounded-full mt-3 overflow-hidden">
+                              <div className="h-full bg-purple-600 rounded-full group-hover:bg-purple-500 transition-all" style={{ width: `${item.taxa}%` }} />
+                           </div>
+                        </div>
+                      ))}
+                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {activeTab === 'geral' && (
         <>

@@ -200,7 +200,8 @@ const App: React.FC = () => {
   const filteredData = useMemo(() => {
     if (!user) return { alunos: [], turmas: [], matriculas: [], presencas: [], experimentais: [] };
     const isMaster = user.nivel === 'Gestor Master';
-    const allowedUnits = new Set<string>(user.unidade === 'TODAS' ? ['todas'] : user.unidade.split(',').map(u => normalize(u)));
+    const unidadestr = user.unidade || '';
+    const allowedUnits = new Set<string>(unidadestr === 'TODAS' ? ['todas'] : unidadestr.split(',').map(u => normalize(u)));
 
     const checkUnitAccess = (unitName: string) => {
       if (allowedUnits.has('todas')) return true;

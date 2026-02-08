@@ -90,11 +90,12 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
   const filteredExperimentais = useMemo(() => {
-    const userUnits = normalizeText(currentUser.unidade).split(',').map(u => u.trim());
+    const unidadestr = currentUser.unidade || '';
+    const userUnits = normalizeText(unidadestr).split(',').map(u => u.trim());
     const regenteSiglaTarget = isRegente ? deepNormalize(userName) : '';
 
     return experimentais.filter(exp => {
-      if (currentUser.unidade !== 'TODAS') {
+      if (unidadestr !== 'TODAS') {
         const expUnit = normalizeText(exp.unidade);
         if (!userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) return false;
       }
@@ -164,13 +165,13 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   };
 
   const openComposeModal = (exp: AulaExperimental) => {
-    const responsavelFull = exp.responsavel1 || exp.estudante;
-    const primeiroNomeResponsavel = responsavelFull.trim().split(' ')[0];
-    const estudantePrimeiroNome = exp.estudante.trim().split(' ')[0];
-    const unidade = exp.unidade;
-    const curso = exp.curso;
+    const responsavelFull = exp.responsavel1 || exp.estudante || '';
+    const primeiroNomeResponsavel = (responsavelFull || '').trim().split(' ')[0] || '';
+    const estudantePrimeiroNome = (exp.estudante || '').trim().split(' ')[0] || '';
+    const unidade = exp.unidade || '';
+    const curso = exp.curso || '';
     
-    let msg = msgTemplate
+    let msg = (msgTemplate || '')
       .replace(/{{responsavel}}/g, primeiroNomeResponsavel)
       .replace(/{{estudante}}/g, estudantePrimeiroNome)
       .replace(/{{unidade}}/g, unidade)
@@ -278,7 +279,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-lg font-bold text-slate-900 leading-tight truncate">{exp.estudante}</h4>
+                        <h4 className="text-lg font-bold text-slate-900 leading-tight truncate pr-4" title={exp.estudante}>{exp.estudante}</h4>
                         {exp.convertido && <span className="bg-emerald-100 text-emerald-700 text-[8px] font-black px-1.5 py-0.5 rounded border border-emerald-200 shrink-0">MATRICULADO</span>}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 mt-1.5">
