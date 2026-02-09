@@ -78,15 +78,19 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
 
   const siglasExistentes = useMemo(() => {
     const set = new Set<string>();
-    const userUnits = normalize(currentUser.unidade).split(',');
+    const unidadestr = currentUser.unidade || '';
+    const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
 
     alunos.forEach(aluno => {
-      if (normalize(aluno.statusMatricula) !== 'ativo') return;
+      // Verificação mais permissiva: se não for explicitamente "cancelado", consideramos ativo para preparação
+      const status = normalize(aluno.statusMatricula || 'ativo');
+      if (status === 'cancelado') return;
       
       // Filtrar siglas apenas das unidades que o usuário tem acesso
-      if (currentUser.unidade !== 'TODAS') {
+      if (unidadestr !== 'TODAS') {
         const alunoUnit = normalize(aluno.unidade);
-        if (!userUnits.some(u => u === alunoUnit)) return;
+        const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
+        if (!hasAccess) return;
       }
 
       const sigla = formatEscolaridade(aluno);
@@ -99,7 +103,6 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
   const [filtroDia, setFiltroDia] = useState(idHoje);
 
   // Inicializa o filtro com o nome do usuário se for regente e a sigla existir
-  // Adicionado critério de normalizeMatch para ignorar espaços entre nome do usuário e sigla do aluno
   useEffect(() => {
     if (isRegente && !filtroSigla && siglasExistentes.length > 0) {
       const nomeUserMatch = normalizeMatch(currentUser.nome || '');
@@ -123,7 +126,8 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     
     const siglaBusca = normalize(filtroSigla);
     const exibirTodos = filtroSigla === 'EXIBIR_TODOS';
-    const userUnits = normalize(currentUser.unidade).split(',');
+    const unidadestr = currentUser.unidade || '';
+    const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
 
     const diaTerms: Record<string, string[]> = {
       'seg': ['seg', 'segunda', '2ª', '2a'],
@@ -134,14 +138,15 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     };
 
     const alunosFiltrados = alunos.filter(aluno => {
-      // 1. Validar Status
-      const statusAtivo = normalize(aluno.statusMatricula) === 'ativo';
-      if (!statusAtivo) return false;
+      // 1. Validar Status (Mais permissivo na exibição)
+      const status = normalize(aluno.statusMatricula || 'ativo');
+      if (status === 'cancelado') return false;
 
-      // 2. Validar Unidade (Segurança básica por nível)
-      if (currentUser.unidade !== 'TODAS') {
+      // 2. Validar Unidade
+      if (unidadestr !== 'TODAS') {
         const alunoUnit = normalize(aluno.unidade);
-        if (!userUnits.some(u => u === alunoUnit)) return false;
+        const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
+        if (!hasAccess) return false;
       }
       
       // 3. Validar Sigla Selecionada
@@ -281,8 +286,8 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
                        <h3 className="text-xl font-bold text-slate-400">Nenhum estudante com atividades</h3>
                        <p className="text-slate-300 text-sm mt-1">
                          {filtroSigla === 'EXIBIR_TODOS' 
-                           ? `Não localizamos nenhum estudante ativo com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`
-                           : `Não localizamos estudantes ativos da sigla ${filtroSigla} na unidade ${currentUser.unidade} com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`}
+                           ? `Não localizamos nenhum estudante com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`
+                           : `Não localizamos estudantes da sigla ${filtroSigla} com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`}
                        </p>
                      </td>
                    </tr>

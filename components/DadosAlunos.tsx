@@ -79,13 +79,46 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
     if (!dateVal || String(dateVal).trim() === '' || String(dateVal).toLowerCase() === 'null') return null;
     
     try {
-      let s = String(dateVal).trim();
+      let s = String(dateVal).trim().toLowerCase();
       
+      // Se for um serial do Excel
+      if (/^\d+$/.test(s)) {
+        const serial = parseInt(s);
+        if (serial > 30000 && serial < 60000) {
+          const d = new Date((serial - 25569) * 86400 * 1000);
+          if (!isNaN(d.getTime())) return d;
+        }
+      }
+
+      // Limpeza de sufixos
+      s = s.split(',')[0].trim();
+      s = s.split(' às ')[0].trim();
+
+      // Mapeamento de meses
+      const monthsMap: Record<string, number> = {
+        'jan': 0, 'fev': 1, 'mar': 2, 'abr': 3, 'mai': 4, 'jun': 5,
+        'jul': 6, 'ago': 7, 'set': 8, 'out': 9, 'nov': 10, 'dez': 11,
+        'janeiro': 0, 'fevereiro': 1, 'marco': 2, 'março': 2, 'abril': 3, 'maio': 4, 'junho': 5,
+        'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11
+      };
+
+      // 1. Verboso
+      const verboseMatch = s.match(/^(\d{1,2})\s+de\s+([a-zç]+)\.?\s+de\s+(\d{4})/);
+      if (verboseMatch) {
+        const day = parseInt(verboseMatch[1]);
+        const monthName = verboseMatch[2].substring(0, 3);
+        const monthIndex = monthsMap[monthName];
+        const year = parseInt(verboseMatch[3]);
+        if (monthIndex !== undefined) return new Date(year, monthIndex, day);
+      }
+
+      // 2. ISO
       const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (isoMatch) {
         return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
       }
 
+      // 3. DMY
       const dmyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
       if (dmyMatch) {
         const day = parseInt(dmyMatch[1]);
@@ -95,11 +128,9 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
         return new Date(year, month - 1, day);
       }
 
-      const d = new Date(s);
+      const d = new Date(dateVal);
       if (!isNaN(d.getTime())) return d;
-    } catch (e) {
-      console.warn("Falha ao processar data:", dateVal);
-    }
+    } catch (e) {}
     return null;
   };
 
@@ -109,7 +140,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
     
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = String(date.getFullYear());
+    const year = String(date.getFullYear()).substring(2);
     
     return `${day}/${month}/${year}`;
   };
@@ -121,7 +152,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
         const phone1 = (aluno.whatsapp1 || '').replace(/\D/g, '');
         const phone2 = (aluno.whatsapp2 || '').replace(/\D/g, '');
         const filterPhone = phoneFilter.replace(/\D/g, '');
-        const matchesPhone = filterPhone === '' || phone1.includes(filterPhone) || phone2.includes(filterPhone);
+        const matchesPhone = filterPhone === '' || phone1.includes(phoneFilter) || phone2.includes(phoneFilter);
         return matchesName && matchesPhone;
       })
       .sort((a, b) => a.nome.localeCompare(b.nome));
@@ -257,8 +288,8 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
             return dateB - dateA;
           });
           
-          const isAtivo = aluno.statusMatricula === 'Ativo';
-          const isLead = !!aluno.isLead || aluno.statusMatricula === 'Lead Qualificado';
+          const isAtivo = turmasAtivas.length > 0;
+          const isLead = !isAtivo && (!!aluno.isLead || aluno.statusMatricula === 'Lead Qualificado');
 
           return (
             <div key={aluno.id} className={`bg-white rounded-[32px] shadow-sm border overflow-hidden flex flex-col hover:shadow-lg transition-all ${isLead && !isAtivo ? 'border-purple-200' : !isAtivo ? 'border-red-100 opacity-95' : 'border-slate-100'}`}>

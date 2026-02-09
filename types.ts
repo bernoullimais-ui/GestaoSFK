@@ -82,7 +82,12 @@ export interface AulaExperimental {
   observacaoProfessor?: string;
   dataStatusAtualizado?: string;
   followUpSent?: boolean;
+  lembreteEnviado?: boolean;
   convertido?: boolean;
+  // Campos adicionais para escolaridade
+  etapa?: string;
+  anoEscolar?: string;
+  turmaEscolar?: string;
 }
 
 export type ViewType = 'dashboard' | 'alunos' | 'frequencia' | 'relatorios' | 'turmas' | 'usuarios' | 'preparacao' | 'experimental' | 'dados-alunos' | 'churn-risk' | 'settings';

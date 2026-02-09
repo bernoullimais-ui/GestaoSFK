@@ -56,20 +56,29 @@ function doPost(e) {
       var headers = rows[0].map(function(h) { return normalizeText(h).replace(/[^a-z0-9]/g, ""); });
       
       var colEstudante = headers.indexOf("estudante");
+      // Busca flexível por curso/turma/modalidade
       var colCurso = headers.indexOf("modalidade");
+      if (colCurso === -1) colCurso = headers.indexOf("curso");
+      if (colCurso === -1) colCurso = headers.indexOf("turma");
+      
       var colEnviado = headers.indexOf("enviado");
       var colFeedback = headers.indexOf("feedback");
       var colStatus = headers.indexOf("status");
       var colConversao = headers.indexOf("conversao");
+      var colLembrete = headers.indexOf("lembrete"); // Coluna N esperada (13 se 0-indexed)
       
       for (var i = 1; i < rows.length; i++) {
-        if (normalizeText(rows[i][colEstudante]) === normalizeText(data.estudante) && 
-            normalizeText(rows[i][colCurso]) === normalizeText(data.curso)) {
+        var rowEstudante = normalizeText(rows[i][colEstudante]);
+        var rowCurso = normalizeText(rows[i][colCurso]);
+        
+        if (rowEstudante === normalizeText(data.estudante) && 
+            (rowCurso === normalizeText(data.curso) || !data.curso)) {
           
-          if (colEnviado !== -1 && data.enviado) sheet.getRange(i + 1, colEnviado + 1).setValue(data.enviado);
-          if (colFeedback !== -1 && data.feedback) sheet.getRange(i + 1, colFeedback + 1).setValue(data.feedback);
-          if (colStatus !== -1 && data.status) sheet.getRange(i + 1, colStatus + 1).setValue(data.status);
-          if (colConversao !== -1 && data.conversao) sheet.getRange(i + 1, colConversao + 1).setValue(data.conversao);
+          if (colEnviado !== -1 && data.enviado !== undefined) sheet.getRange(i + 1, colEnviado + 1).setValue(data.enviado);
+          if (colFeedback !== -1 && data.feedback !== undefined) sheet.getRange(i + 1, colFeedback + 1).setValue(data.feedback);
+          if (colStatus !== -1 && data.status !== undefined) sheet.getRange(i + 1, colStatus + 1).setValue(data.status);
+          if (colConversao !== -1 && data.conversao !== undefined) sheet.getRange(i + 1, colConversao + 1).setValue(data.conversao);
+          if (colLembrete !== -1 && data.lembrete !== undefined) sheet.getRange(i + 1, colLembrete + 1).setValue(data.lembrete);
           break;
         }
       }
@@ -85,7 +94,7 @@ function doPost(e) {
       
       var rows = sheet.getDataRange().getValues();
       
-      // Mapeamento das Colunas conforme Screenshot
+      // Mapeamento das Colunas
       var colAluno = 0;   // A
       var colUnidade = 1; // B
       var colTurma = 2;   // C
@@ -103,7 +112,6 @@ function doPost(e) {
             var rowTurma = normalizeText(rows[i][colTurma]);
             var rowData = rows[i][colData];
             
-            // Formata data da planilha para comparação
             var formattedRowData = "";
             if (rowData instanceof Date) {
               formattedRowData = Utilities.formatDate(rowData, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
@@ -120,13 +128,10 @@ function doPost(e) {
           }
 
           if (foundIndex !== -1) {
-            // Atualiza linha existente (Status e Observação)
             sheet.getRange(foundIndex, colStatus + 1).setValue(p.status);
             sheet.getRange(foundIndex, colObs + 1).setValue(p.observacao || "");
-            // Garante que a Unidade esteja correta também se houver mudança
             sheet.getRange(foundIndex, colUnidade + 1).setValue(p.unidade);
           } else {
-            // Adiciona nova linha seguindo a ordem da planilha
             sheet.appendRow([
               p.aluno,      // A
               p.unidade,    // B
@@ -183,15 +188,3 @@ function normalizeText(text) {
   return text.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 ```
-
-## 2. Como aplicar a correção (Importante)
-
-1. Vá em **Extensões** > **Apps Script** na sua planilha.
-2. Apague o código antigo e cole este novo código.
-3. Clique em **Salvar**.
-4. Clique em **Implantar** > **Gerenciar Implantações**.
-5. Clique no ícone de **Lápis (Editar)** na implantação ativa.
-6. Selecione **"Nova Versão"** na lista suspensa.
-7. Clique em **Implantar**.
-
-Desta forma, os registros de frequência agora respeitarão as colunas **ESTUDANTE**, **UNIDADE**, **TURMA**, **DATA**, **STATUS** e **OBSERVAÇÃO**.
