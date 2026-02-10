@@ -11,8 +11,9 @@ interface PreparacaoTurmasProps {
 }
 
 const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, matriculas, currentUser }) => {
-  const isGestor = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master';
+  const isGestorOrCoordenador = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Coordenador';
   const isRegente = currentUser.nivel === 'Regente';
+  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
   
   const idHoje = useMemo(() => {
     const d = new Date().getDay();
@@ -24,13 +25,42 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
   const normalize = (t: string) => 
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
-  // Função específica para comparar siglas sem considerar espaços
-  const normalizeMatch = (t: string) => 
-    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '').trim();
+  const professorName = normalize(currentUser.nome || currentUser.login);
 
-  /**
-   * Função para comparar siglas de forma pedagógica
-   */
+  // 1. Identifica as turmas em que o usuário logado é o professor
+  const myTurmasDocente = useMemo(() => {
+    return turmas.filter(t => {
+      const profInSheet = normalize(t.professor).replace(/^prof\.?\s*/i, '');
+      return profInSheet.includes(professorName) || professorName.includes(profInSheet);
+    });
+  }, [turmas, professorName]);
+
+  // 2. Filtra as matrículas que pertencem às modalidades/unidades que este professor leciona
+  const myMatriculas = useMemo(() => {
+    // Para Regente ou Coordenador (Gestor-like), consideramos as matrículas das unidades permitidas
+    if (isRegente || isGestorOrCoordenador) return matriculas;
+    if (!isProfessor) return matriculas;
+    
+    return matriculas.filter(m => {
+      const mCursoNorm = normalize(m.turmaId.split('-')[0].split('(')[0]);
+      const mUnidadeNorm = normalize(m.unidade);
+      
+      return myTurmasDocente.some(t => {
+        const tNomeNorm = normalize(t.nome.split('-')[0].split('(')[0]);
+        const tUnidadeNorm = normalize(t.unidade);
+        
+        // Match flexível de unidade
+        const unidadesBatem = tUnidadeNorm === mUnidadeNorm || tUnidadeNorm.includes(mUnidadeNorm) || mUnidadeNorm.includes(tUnidadeNorm);
+        const cursosBatem = tNomeNorm === mCursoNorm || tNomeNorm.includes(mCursoNorm) || mCursoNorm.includes(tNomeNorm);
+
+        return unidadesBatem && cursosBatem;
+      });
+    });
+  }, [matriculas, isProfessor, isRegente, isGestorOrCoordenador, myTurmasDocente]);
+
+  // Lista de IDs de alunos vinculados a este professor (apenas para Professor)
+  const studentsWithMyTurmas = useMemo(() => new Set(myMatriculas.map(m => m.alunoId)), [myMatriculas]);
+
   const compareSiglas = (a: string, b: string) => {
     const getWeight = (s: string) => {
       if (s.startsWith('EI')) return 1;
@@ -38,17 +68,12 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
       if (s.startsWith('EM')) return 3;
       return 4;
     };
-    
     const wA = getWeight(a);
     const wB = getWeight(b);
-    
     if (wA !== wB) return wA - wB;
-
     const nA = parseInt(a.replace(/\D/g, '')) || 0;
     const nB = parseInt(b.replace(/\D/g, '')) || 0;
-    
     if (nA !== nB) return nA - nB;
-
     return a.localeCompare(b);
   };
 
@@ -56,21 +81,12 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     const etapaRaw = (aluno.etapa || '').toUpperCase().trim();
     const anoRaw = (aluno.anoEscolar || '').toUpperCase().trim();
     const turmaRaw = (aluno.turmaEscolar || '').toUpperCase().trim();
-
     let etapa = '';
     if (etapaRaw.includes('INFANTIL')) etapa = 'EI';
     else if (etapaRaw.includes('FUNDAMENTAL')) etapa = 'EF';
     else if (etapaRaw.includes('MEDIO')) etapa = 'EM';
     else etapa = etapaRaw;
-
-    let ano = anoRaw
-      .replace('GRUPO', 'G')
-      .replace('ANO', '')
-      .replace('SÉRIE', '')
-      .replace('SERIE', '')
-      .replace(/\s+/g, '')
-      .trim();
-
+    let ano = anoRaw.replace('GRUPO', 'G').replace('ANO', '').replace('SÉRIE', '').replace('SERIE', '').replace(/\s+/g, '').trim();
     if (!etapa && !ano) return '';
     let siglaBase = (etapa && ano) ? `${etapa}-${ano}` : (etapa || ano);
     return `${siglaBase}${turmaRaw ? ' ' + turmaRaw : ''}`.trim();
@@ -82,34 +98,35 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
 
     alunos.forEach(aluno => {
-      // Verificação mais permissiva: se não for explicitamente "cancelado", consideramos ativo para preparação
       const status = normalize(aluno.statusMatricula || 'ativo');
       if (status === 'cancelado') return;
       
-      // Filtrar siglas apenas das unidades que o usuário tem acesso
-      if (unidadestr !== 'TODAS') {
-        const alunoUnit = normalize(aluno.unidade);
-        const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
-        if (!hasAccess) return;
+      if (isProfessor) {
+        if (!studentsWithMyTurmas.has(aluno.id)) return;
+      } else if (isRegente || isGestorOrCoordenador) {
+        // Filtro por unidade
+        if (unidadestr !== 'TODAS' && userUnits.length > 0) {
+          const alunoUnit = normalize(aluno.unidade);
+          const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
+          if (!hasAccess) return;
+        }
       }
 
       const sigla = formatEscolaridade(aluno);
       if (sigla) set.add(sigla);
     });
     return Array.from(set).sort(compareSiglas);
-  }, [alunos, currentUser]);
+  }, [alunos, currentUser, isProfessor, isRegente, isGestorOrCoordenador, studentsWithMyTurmas]);
 
   const [filtroSigla, setFiltroSigla] = useState('');
   const [filtroDia, setFiltroDia] = useState(idHoje);
 
-  // Inicializa o filtro com o nome do usuário se for regente e a sigla existir
+  // Auto-seleção para Regente
   useEffect(() => {
     if (isRegente && !filtroSigla && siglasExistentes.length > 0) {
-      const nomeUserMatch = normalizeMatch(currentUser.nome || '');
-      const siglaMatch = siglasExistentes.find(s => normalizeMatch(s) === nomeUserMatch);
-      if (siglaMatch) {
-        setFiltroSigla(siglaMatch);
-      }
+      const userNameNorm = normalize(currentUser.nome || '');
+      const match = siglasExistentes.find(s => normalize(s) === userNameNorm);
+      if (match) setFiltroSigla(match);
     }
   }, [isRegente, siglasExistentes, currentUser.nome, filtroSigla]);
 
@@ -138,20 +155,20 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     };
 
     const alunosFiltrados = alunos.filter(aluno => {
-      // 1. Validar Status (Mais permissivo na exibição)
       const status = normalize(aluno.statusMatricula || 'ativo');
       if (status === 'cancelado') return false;
 
-      // 2. Validar Unidade
-      if (unidadestr !== 'TODAS') {
-        const alunoUnit = normalize(aluno.unidade);
-        const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
-        if (!hasAccess) return false;
+      if (isProfessor) {
+        if (!studentsWithMyTurmas.has(aluno.id)) return false;
+      } else if (isRegente || isGestorOrCoordenador) {
+        if (unidadestr !== 'TODAS' && userUnits.length > 0) {
+          const alunoUnit = normalize(aluno.unidade);
+          const hasAccess = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
+          if (!hasAccess) return false;
+        }
       }
       
-      // 3. Validar Sigla Selecionada
       if (exibirTodos) return true;
-      
       const siglaAluno = normalize(formatEscolaridade(aluno));
       return siglaAluno === siglaBusca;
     });
@@ -161,14 +178,27 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
         const alunoMats = matriculas.filter(m => m.alunoId === aluno.id);
         const alunoUnidadeNorm = normalize(aluno.unidade);
 
+        // Turmas que esse aluno frequenta
         const turmasDoDia = turmas.filter(t => {
+          // Filtro de Unidade: Match flexível para permitir "Dom Pedrinho" encontrar "Escola Dom Pedrinho"
           const tUnidadeNorm = normalize(t.unidade);
-          if (tUnidadeNorm !== alunoUnidadeNorm && !tUnidadeNorm.includes(alunoUnidadeNorm) && !alunoUnidadeNorm.includes(tUnidadeNorm)) {
-            return false;
+          const unidadeBate = tUnidadeNorm === alunoUnidadeNorm || tUnidadeNorm.includes(alunoUnidadeNorm) || alunoUnidadeNorm.includes(tUnidadeNorm);
+          
+          if (!unidadeBate) return false;
+
+          // Filtro de Professor: Se for professor, ele só vê a turma dele.
+          if (isProfessor) {
+            const isMyTurma = myTurmasDocente.some(mt => mt.id === t.id);
+            if (!isMyTurma) return false;
           }
 
-          const tNomeNorm = normalize(t.nome);
-          const estaMatriculado = alunoMats.some(m => normalize(m.turmaId).includes(tNomeNorm));
+          const tNomeNorm = normalize(t.nome.split('-')[0].split('(')[0]);
+          
+          const estaMatriculado = alunoMats.some(m => {
+            const mCursoNorm = normalize(m.turmaId.split('-')[0].split('(')[0]);
+            return mCursoNorm === tNomeNorm || tNomeNorm.includes(mCursoNorm) || mCursoNorm.includes(tNomeNorm);
+          });
+          
           if (!estaMatriculado) return false;
 
           const h = normalize(t.horario);
@@ -189,7 +219,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
         if (siglaComp !== 0) return siglaComp;
         return a.aluno.nome.localeCompare(b.aluno.nome);
       });
-  }, [alunos, turmas, matriculas, filtroSigla, filtroDia, currentUser]);
+  }, [alunos, turmas, myTurmasDocente, matriculas, filtroSigla, filtroDia, currentUser, isProfessor, isRegente, isGestorOrCoordenador, studentsWithMyTurmas]);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-20">
@@ -217,7 +247,9 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
               }`}
             >
               <option value="">Selecione a Sigla...</option>
-              {isGestor && <option value="EXIBIR_TODOS" className="text-blue-600 font-black">🌟 EXIBIR TODOS OS ESTUDANTES</option>}
+              {(isGestorOrCoordenador || isProfessor) && (
+                <option value="EXIBIR_TODOS" className="text-blue-600 font-black">🌟 EXIBIR TODOS OS MEUS ESTUDANTES</option>
+              )}
               {siglasExistentes.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -286,7 +318,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
                        <h3 className="text-xl font-bold text-slate-400">Nenhum estudante com atividades</h3>
                        <p className="text-slate-300 text-sm mt-1">
                          {filtroSigla === 'EXIBIR_TODOS' 
-                           ? `Não localizamos nenhum estudante com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`
+                           ? `Não localizamos nenhum estudante seu com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`
                            : `Não localizamos estudantes da sigla ${filtroSigla} com aulas para ${diasSemana.find(d => d.id === filtroDia)?.label.toLowerCase()}.`}
                        </p>
                      </td>
@@ -299,7 +331,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
       ) : (
         <div className="bg-slate-50 border-2 border-dashed border-slate-200 p-20 rounded-[40px] text-center">
            <Search className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-           <p className="text-slate-400 font-bold">Selecione uma Sigla Escolar para visualizar a lista da sua unidade.</p>
+           <p className="text-slate-400 font-bold">Selecione uma Sigla Escolar ou use "Exibir Todos" para visualizar a lista.</p>
         </div>
       )}
     </div>

@@ -54,13 +54,57 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string; }>({ isOpen: false, exp: null, message: '' });
 
-  const isGestor = user.nivel === 'Gestor' || user.nivel === 'Gestor Master';
+  const isGestorOrCoordenador = user.nivel === 'Gestor' || user.nivel === 'Gestor Master' || user.nivel === 'Coordenador';
+  const isProfessor = user.nivel === 'Professor' || user.nivel === 'Estagiário';
+  
+  const normalize = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const professorName = normalize(user.nome || user.login);
+
+  // Filtros específicos para Professor ou Unidade do Coordenador
+  const statsData = useMemo(() => {
+    let filteredTurmas = turmas;
+    let filteredMatriculas = matriculas;
+    
+    if (isProfessor) {
+      filteredTurmas = turmas.filter(t => {
+        const prof = normalize(t.professor).replace(/^prof\.?\s*/i, '');
+        return prof.includes(professorName) || professorName.includes(prof);
+      });
+      
+      const myTurmaIds = new Set(filteredTurmas.map(t => t.id));
+      const myTurmaNames = new Set(filteredTurmas.map(t => normalize(t.nome)));
+      
+      filteredMatriculas = matriculas.filter(m => 
+        myTurmaIds.has(m.turmaId) || myTurmaNames.has(normalize(m.turmaId.split('-')[0]))
+      );
+    } else if (user.unidade !== 'TODAS') {
+      const userUnits = normalize(user.unidade).split(',').map(u => u.trim());
+      filteredTurmas = turmas.filter(t => userUnits.some(u => normalize(t.unidade).includes(u) || u.includes(normalize(t.unidade))));
+      filteredMatriculas = matriculas.filter(m => userUnits.some(u => normalize(m.unidade).includes(u) || u.includes(normalize(m.unidade))));
+    }
+
+    const uniqueStudents = new Set(filteredMatriculas.map(m => m.alunoId));
+    const activeStudents = alunos.filter(a => uniqueStudents.has(a.id) && a.statusMatricula === 'Ativo');
+
+    return {
+      totalAlunos: uniqueStudents.size,
+      alunosAtivos: activeStudents.length,
+      matriculasAtivas: filteredMatriculas.length,
+      turmasAtivas: filteredTurmas.length
+    };
+  }, [isProfessor, turmas, matriculas, alunos, professorName, user.unidade]);
+
   const slugify = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 
   const churnPending = useMemo(() => {
-    if (!isGestor || presencas.length === 0) return 0;
+    if (!isGestorOrCoordenador || presencas.length === 0) return 0;
+    
+    const userUnits = user.unidade !== 'TODAS' ? normalize(user.unidade).split(',').map(u => u.trim()) : null;
+
     const groups: Record<string, Presenca[]> = {};
     presencas.forEach(p => {
+      if (userUnits && !userUnits.some(u => normalize(p.unidade).includes(u) || u.includes(normalize(p.unidade)))) return;
+
       const alunoName = (p as any)._estudantePlanilha || p.alunoId;
       const cursoName = (p as any)._turmaPlanilha || p.turmaId;
       const unidadeName = p.unidade;
@@ -68,6 +112,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!groups[key]) groups[key] = [];
       groups[key].push(p);
     });
+
     let count = 0;
     for (const key in groups) {
       const sorted = [...groups[key]].sort((a, b) => b.data.localeCompare(a.data));
@@ -85,17 +130,18 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     }
     return count;
-  }, [isGestor, presencas, acoesRetencao]);
+  }, [isGestorOrCoordenador, presencas, acoesRetencao, user.unidade]);
 
   const conversionAlerts = useMemo(() => {
-    if (!isGestor) return [];
-    // Alerta de conversão: Aluno Presente em experimental, Follow-up não enviado, e não convertido ainda.
-    return experimentais.filter(exp => 
-        exp.status === 'Presente' && 
-        !exp.followUpSent && 
-        !exp.convertido
-    ).sort((a, b) => (a.aula || '').localeCompare(b.aula || ''));
-  }, [isGestor, experimentais]);
+    if (!isGestorOrCoordenador) return [];
+    
+    const userUnits = user.unidade !== 'TODAS' ? normalize(user.unidade).split(',').map(u => u.trim()) : null;
+
+    return experimentais.filter(exp => {
+      if (userUnits && !userUnits.some(u => normalize(exp.unidade).includes(u) || u.includes(normalize(exp.unidade)))) return false;
+      return exp.status === 'Presente' && !exp.followUpSent && !exp.convertido;
+    }).sort((a, b) => (a.aula || '').localeCompare(b.aula || ''));
+  }, [isGestorOrCoordenador, experimentais, user.unidade]);
 
   const openConversionModal = (exp: AulaExperimental) => {
     const responsavelFull = exp.responsavel1 || exp.estudante || '';
@@ -142,10 +188,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const stats = [
-    { label: 'Alunos Cadastrados', value: alunos.length, icon: UserPlus, color: 'bg-slate-700' },
-    { label: 'Alunos Ativos', value: alunos.filter(a => a.statusMatricula === 'Ativo').length, icon: Users, color: 'bg-blue-600' },
-    { label: 'Matrículas Ativas', value: matriculas.length, icon: ClipboardCheck, color: 'bg-emerald-600' },
-    { label: 'Turmas Ativas', value: turmasCount, icon: GraduationCap, color: 'bg-purple-600' },
+    { label: 'Alunos Cadastrados', value: statsData.totalAlunos, icon: UserPlus, color: 'bg-slate-700' },
+    { label: 'Alunos Ativos', value: statsData.alunosAtivos, icon: Users, color: 'bg-blue-600' },
+    { label: 'Matrículas Ativas', value: statsData.matriculasAtivas, icon: ClipboardCheck, color: 'bg-emerald-600' },
+    { label: 'Turmas Ativas', value: statsData.turmasAtivas, icon: GraduationCap, color: 'bg-purple-600' },
   ];
 
   return (
@@ -158,7 +204,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {isGestor && churnPending > 0 && (
+          {isGestorOrCoordenador && churnPending > 0 && (
             <div className="bg-red-50 border-2 border-red-100 rounded-[32px] p-8 flex flex-col items-center justify-between shadow-xl shadow-red-900/5 animate-in slide-in-from-top-4 duration-500">
                <div className="flex items-center gap-6 mb-6 w-full">
                  <div className="w-16 h-16 bg-red-500 text-white rounded-2xl flex items-center justify-center shrink-0">
@@ -178,7 +224,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
           )}
 
-          {isGestor && conversionAlerts.length > 0 && (
+          {isGestorOrCoordenador && conversionAlerts.length > 0 && (
             <div className="bg-purple-50 border-2 border-purple-100 rounded-[32px] p-8 flex flex-col items-center justify-between shadow-xl shadow-purple-900/5 animate-in slide-in-from-top-4 duration-500">
                <div className="flex items-center gap-6 mb-6 w-full">
                  <div className="w-16 h-16 bg-purple-600 text-white rounded-2xl flex items-center justify-center shrink-0">
@@ -256,9 +302,5 @@ const Dashboard: React.FC<DashboardProps> = ({
     </div>
   );
 };
-
-const RefreshCw = ({ className }: { className?: string }) => (
-  <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-);
 
 export default Dashboard;

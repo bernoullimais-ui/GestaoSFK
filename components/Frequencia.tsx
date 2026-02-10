@@ -45,15 +45,30 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
   const [isEditMode, setIsEditMode] = useState(false);
   const [buscaAluno, setBuscaAluno] = useState('');
 
+  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
   const normalize = (t: string) => 
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
+  const professorName = normalize(currentUser.nome || currentUser.login);
 
-  // 1. FILTRO DE UNIDADES (Sincronizado com turmas disponíveis)
+  const myPermittedTurmas = useMemo(() => {
+    let filtered = turmas;
+    if (currentUser.unidade !== 'TODAS') {
+      const userUnits = normalize(currentUser.unidade).split(',').map(u => u.trim());
+      filtered = filtered.filter(t => userUnits.some(u => normalize(t.unidade).includes(u) || u.includes(normalize(t.unidade))));
+    }
+    if (isProfessor) {
+      filtered = filtered.filter(t => {
+        const prof = normalize(t.professor).replace(/^prof\.?\s*/i, '');
+        return prof.includes(professorName) || professorName.includes(prof);
+      });
+    }
+    return filtered;
+  }, [turmas, isProfessor, professorName, currentUser.unidade]);
+
   const unidadesDisponiveis = useMemo(() => {
     const seen = new Set<string>();
     const units: string[] = [];
-    
-    turmas.forEach(t => {
+    myPermittedTurmas.forEach(t => {
       const n = t.unidade?.trim();
       if (!n) return;
       const norm = normalize(n);
@@ -62,47 +77,34 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
         units.push(n);
       }
     });
-    
     return units.sort((a, b) => a.localeCompare(b));
-  }, [turmas]);
+  }, [myPermittedTurmas]);
 
-  // 2. FILTRO DE TURMAS (Carrega apenas as turmas da unidade selecionada)
   const displayTurmas = useMemo(() => {
     if (!selectedUnidade) return [];
     const unidadeBusca = normalize(selectedUnidade);
-    let filtered = turmas.filter(t => normalize(t.unidade) === unidadeBusca);
-    
-    // Garantir que não haja duplicatas de ID
+    let filtered = myPermittedTurmas.filter(t => normalize(t.unidade) === unidadeBusca);
     const uniqueMap = new Map<string, Turma>();
     filtered.forEach(t => {
-      if (!uniqueMap.has(t.id)) {
-        uniqueMap.set(t.id, t);
-      }
+      if (!uniqueMap.has(t.id)) uniqueMap.set(t.id, t);
     });
-    
     return Array.from(uniqueMap.values()).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [turmas, selectedUnidade]);
+  }, [myPermittedTurmas, selectedUnidade]);
 
-  // Reset do filtro de turmas se a unidade mudar
   useEffect(() => {
     if (selectedTurmaId) {
       const turmaExisteNaUnidade = displayTurmas.some(t => t.id === selectedTurmaId);
-      if (!turmaExisteNaUnidade) {
-        setSelectedTurmaId('');
-      }
+      if (!turmaExisteNaUnidade) setSelectedTurmaId('');
     }
   }, [displayTurmas]);
 
   const alunosMatriculados = useMemo(() => {
     if (!selectedTurmaId) return [];
-    
     const targetTurma = turmas.find(t => t.id === selectedTurmaId);
     if (!targetTurma) return [];
-
     const tId = normalize(selectedTurmaId);
     const tNome = normalize(targetTurma.nome);
     const tUnidade = normalize(targetTurma.unidade);
-
     const idsAlunosMatriculados = matriculas
       .filter(m => {
         const mTurmaId = normalize(m.turmaId);
@@ -111,9 +113,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
         return false;
       })
       .map(m => m.alunoId);
-
     const uniqueIds = Array.from(new Set(idsAlunosMatriculados));
-
     return alunos.filter(a => 
       uniqueIds.includes(a.id) && 
       (normalize(a.statusMatricula || 'ativo') === 'ativo') &&
@@ -124,13 +124,11 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
   useEffect(() => {
     if (selectedTurmaId && data) {
       const chamadasExistentes = presencas.filter(p => normalize(p.turmaId) === normalize(selectedTurmaId) && p.data === data);
-      
       if (chamadasExistentes.length > 0) {
         setIsEditMode(true);
         const newMarked: Record<string, 'Presente' | 'Ausente'> = {};
         const newNotes: Record<string, string> = {};
         let aulaNote = '';
-
         chamadasExistentes.forEach(p => {
           newMarked[p.alunoId] = p.status;
           if (p.observacao) {
@@ -141,16 +139,13 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
             else if (!matchAula && !matchAluno) aulaNote = p.observacao;
           }
         });
-
         setMarkedPresencas(newMarked);
         setStudentNotes(newNotes);
         setObservacaoAula(aulaNote);
       } else {
         setIsEditMode(false);
         const initial: Record<string, 'Presente' | 'Ausente'> = {};
-        alunosMatriculados.forEach(aluno => {
-          initial[aluno.id] = 'Presente';
-        });
+        alunosMatriculados.forEach(aluno => { initial[aluno.id] = 'Presente'; });
         setMarkedPresencas(initial);
         setStudentNotes({});
         setObservacaoAula('');
@@ -165,7 +160,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
   const handleSave = () => {
     if (!selectedTurmaId) return;
     const selectedTurma = turmas.find(t => t.id === selectedTurmaId);
-    
     const records: Presenca[] = Object.entries(markedPresencas).map(([alunoId, status]) => {
       const individualNote = studentNotes[alunoId]?.trim();
       const classNote = observacaoAula.trim();
@@ -173,7 +167,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
       if (classNote && individualNote) finalNote = `[Aula: ${classNote}] | [Aluno: ${individualNote}]`;
       else if (classNote) finalNote = `[Aula: ${classNote}]`;
       else if (individualNote) finalNote = `[Aluno: ${individualNote}]`;
-
       return {
         id: Math.random().toString(36).substr(2, 9),
         alunoId,
@@ -184,7 +177,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
         observacao: finalNote || undefined
       };
     });
-    
     onSave(records);
     setIsSuccess(true);
     setTimeout(() => setIsSuccess(false), 3000);
@@ -193,10 +185,8 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-20 animate-in fade-in duration-500">
-      {/* SEÇÃO DE FILTROS CASCATA */}
       <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 space-y-8">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
-          {/* FILTRO 1: UNIDADE */}
           <div className="md:col-span-4">
             <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
               <MapPin className="w-3.5 h-3.5 text-blue-500" /> 1. ESCOLHA A UNIDADE
@@ -204,22 +194,15 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
             <div className="relative group">
               <select 
                 value={selectedUnidade}
-                onChange={(e) => { 
-                  setSelectedUnidade(e.target.value); 
-                  setSelectedTurmaId(''); 
-                }}
+                onChange={(e) => { setSelectedUnidade(e.target.value); setSelectedTurmaId(''); }}
                 className="w-full pl-6 pr-10 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700 appearance-none cursor-pointer"
               >
                 <option value="">Selecione...</option>
-                {unidadesDisponiveis.map(u => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
+                {unidadesDisponiveis.map(u => (<option key={u} value={u}>{u}</option>))}
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
             </div>
           </div>
-
-          {/* FILTRO 2: TURMA (SÓ HABILITA APÓS UNIDADE) */}
           <div className="md:col-span-5">
             <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
               <GraduationCap className="w-3.5 h-3.5 text-blue-500" /> 2. SELECIONE A TURMA
@@ -230,21 +213,15 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                 disabled={!selectedUnidade}
                 onChange={(e) => setSelectedTurmaId(e.target.value)}
                 className={`w-full pl-6 pr-10 py-4 border-2 rounded-2xl outline-none transition-all font-bold appearance-none cursor-pointer ${
-                  !selectedUnidade 
-                  ? 'bg-slate-50 border-slate-50 text-slate-300' 
-                  : 'bg-slate-50 border-slate-100 text-slate-700 focus:border-blue-500'
+                  !selectedUnidade ? 'bg-slate-50 border-slate-50 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-700 focus:border-blue-500'
                 }`}
               >
                 <option value="">{selectedUnidade ? 'Clique para escolher...' : 'Aguardando unidade...'}</option>
-                {displayTurmas.map(t => (
-                  <option key={t.id} value={t.id}>{t.nome} ({t.horario})</option>
-                ))}
+                {displayTurmas.map(t => (<option key={t.id} value={t.id}>{t.nome} ({t.horario})</option>))}
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
             </div>
           </div>
-
-          {/* FILTRO 3: DATA */}
           <div className="md:col-span-3">
             <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
               <CalendarIcon className="w-3.5 h-3.5 text-blue-500" /> 3. DATA DA AULA
@@ -257,8 +234,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
             />
           </div>
         </div>
-
-        {/* OBSERVAÇÃO PEDAGÓGICA (SÓ APARECE COM TURMA SELECIONADA) */}
         {selectedTurmaId && (
           <div className="animate-in fade-in zoom-in-95 duration-500 pt-4 border-t border-slate-50">
             <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
@@ -273,8 +248,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
           </div>
         )}
       </div>
-
-      {/* LISTAGEM DE ALUNOS PARA CHAMADA */}
       {selectedTurmaId && (
         <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
           <div className="p-8 bg-[#0f172a] text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -287,9 +260,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                 {isEditMode ? 'REGISTRO JÁ EXISTE NA PLANILHA' : 'LANÇAMENTO DE NOVO REGISTRO'}
               </p>
             </div>
-            
             <div className="flex flex-col md:flex-row items-center gap-4">
-               {/* BUSCA INTERNA DE ALUNO */}
                <div className="relative">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                   <input 
@@ -306,7 +277,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                </div>
             </div>
           </div>
-          
           <div className="divide-y divide-slate-50">
             {alunosMatriculados.length > 0 ? alunosMatriculados.map((aluno) => (
               <div key={aluno.id} className="flex flex-col">
@@ -324,9 +294,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                         <button 
                           onClick={() => setVisibleNotes(v => ({ ...v, [aluno.id]: !v[aluno.id] }))}
                           className={`p-2.5 rounded-xl border-2 transition-all active:scale-95 ${
-                            studentNotes[aluno.id] 
-                            ? 'bg-amber-100 border-amber-200 text-amber-600' 
-                            : 'bg-white border-slate-100 text-slate-300 hover:text-blue-600 hover:border-blue-100'
+                            studentNotes[aluno.id] ? 'bg-amber-100 border-amber-200 text-amber-600' : 'bg-white border-slate-100 text-slate-300 hover:text-blue-600 hover:border-blue-100'
                           }`}
                           title="Observação do Aluno"
                         >
@@ -336,14 +304,11 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                       <p className="text-[10px] font-black text-slate-400 uppercase mt-1 tracking-widest">ESTUDANTE ATIVO</p>
                     </div>
                   </div>
-
                   <div className="flex gap-4">
                     <button 
                       onClick={() => handleTogglePresenca(aluno.id, 'Presente')}
                       className={`flex-1 sm:flex-none px-8 py-4 rounded-2xl border-2 font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm ${
-                        markedPresencas[aluno.id] === 'Presente' 
-                        ? 'bg-blue-600 border-blue-600 text-white shadow-blue-600/20' 
-                        : 'bg-white border-slate-100 text-slate-300'
+                        markedPresencas[aluno.id] === 'Presente' ? 'bg-blue-600 border-blue-600 text-white shadow-blue-600/20' : 'bg-white border-slate-100 text-slate-300'
                       }`}
                     >
                       <CheckCircle2 className="w-5 h-5" /> PRESENTE
@@ -351,17 +316,13 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                     <button 
                       onClick={() => handleTogglePresenca(aluno.id, 'Ausente')}
                       className={`flex-1 sm:flex-none px-8 py-4 rounded-2xl border-2 font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm ${
-                        markedPresencas[aluno.id] === 'Ausente' 
-                        ? 'bg-red-500 border-red-500 text-white shadow-red-500/20' 
-                        : 'bg-white border-slate-100 text-slate-300'
+                        markedPresencas[aluno.id] === 'Ausente' ? 'bg-red-500 border-red-500 text-white shadow-red-500/20' : 'bg-white border-slate-100 text-slate-300'
                       }`}
                     >
                       <XCircle className="w-5 h-5" /> AUSENTE
                     </button>
                   </div>
                 </div>
-
-                {/* NOTA INDIVIDUAL DO ALUNO */}
                 {(visibleNotes[aluno.id] || studentNotes[aluno.id]) && (
                   <div className="px-6 pb-6 animate-in slide-in-from-top-2">
                     <div className="bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl">
@@ -383,7 +344,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
               </div>
             )}
           </div>
-          
           <div className="p-10 bg-slate-50 border-t border-slate-100 flex justify-center">
             <button 
               onClick={handleSave}
@@ -395,8 +355,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
           </div>
         </div>
       )}
-
-      {/* FEEDBACK DE SUCESSO */}
       {isSuccess && (
         <div className="fixed bottom-10 right-10 bg-blue-600 text-white px-10 py-6 rounded-3xl shadow-2xl flex items-center gap-5 animate-in slide-in-from-right-10 z-[100] border-2 border-blue-400">
           <CheckCircle2 className="w-8 h-8" />
@@ -406,8 +364,6 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
           </div>
         </div>
       )}
-
-      {/* PLACEHOLDERS DE SELEÇÃO */}
       {!selectedTurmaId && (
         <div className="bg-slate-50 border-4 border-dashed border-slate-200 p-24 rounded-[60px] text-center space-y-4">
            <div className="w-20 h-20 bg-white rounded-3xl shadow-sm flex items-center justify-center mx-auto mb-6">

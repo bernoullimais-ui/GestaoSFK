@@ -276,11 +276,18 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
         {filteredAlunos.length > 0 ? filteredAlunos.map(aluno => {
           const turmasAtivas = matriculas
             .filter(m => m.alunoId === aluno.id)
-            .map(m => ({ 
-                id: m.id, 
-                nome: turmas.find(t => t.id === m.turmaId)?.nome || m.turmaId, 
-                dataMatricula: m.dataMatricula 
-            }));
+            .map(m => {
+              // Limpa o nome da turma removendo a unidade se o find falhar ou retornar com unidade
+              let nomeTurma = turmas.find(t => t.id === m.turmaId)?.nome || m.turmaId;
+              // Regex para remover sufixos de unidade como "- AKA", "- BUNNY", etc se vierem no nome
+              nomeTurma = nomeTurma.split(' - ')[0].split(' (')[0].split('-')[0].trim();
+
+              return { 
+                  id: m.id, 
+                  nome: nomeTurma, 
+                  dataMatricula: m.dataMatricula 
+              };
+            });
             
           const turmasCanceladas = [...(aluno.cursosCanceladosDetalhes || [])].sort((a, b) => {
             const dateA = parseDate(a.dataCancelamento)?.getTime() || 0;
@@ -390,7 +397,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({
                     <div className="space-y-2">
                       {turmasCanceladas.length > 0 ? turmasCanceladas.map((c, i) => (
                         <div key={i} className="bg-slate-50 p-3 rounded-2xl border border-slate-200 opacity-80">
-                           <p className="text-[11px] font-black text-slate-500 uppercase leading-none mb-1.5 line-through truncate">{c.nome}</p>
+                           <p className="text-[11px] font-black text-slate-500 uppercase leading-none mb-1.5 line-through truncate">{c.nome.split(' - ')[0]}</p>
                            <div className="space-y-1">
                               <div className="text-[9px] font-bold text-slate-400 flex items-center gap-1.5">
                                 <CalendarDays className="w-3 h-3" />

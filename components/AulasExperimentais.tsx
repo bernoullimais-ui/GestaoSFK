@@ -64,33 +64,67 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const [localChanges, setLocalChanges] = useState<Record<string, { status?: string, feedback?: string }>>({});
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string; isLembrete: boolean }>({ isOpen: false, exp: null, message: '', isLembrete: false });
 
-  const isGestor = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master';
-  const isProfessor = currentUser.nivel === 'Professor';
+  const isGestorOrCoordenador = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Coordenador';
   const isRegente = currentUser.nivel === 'Regente';
-  const userName = (currentUser.nome || currentUser.login);
-
-  const canEdit = isProfessor || isGestor;
-
+  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
+  
   const normalizeText = (t: string) => 
-    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
+  
+  const professorName = normalizeText(currentUser.nome || currentUser.login);
 
-  // Função ajustada para capturar Escolaridade conforme colunas E e F da planilha
+  // Mapeia quais cursos e unidades este professor atende
+  const professorAssignments = useMemo(() => {
+    if (!isProfessor) return [];
+    return turmas.filter(t => {
+      const prof = normalizeText(t.professor).replace(/^prof\.?\s*/i, '');
+      return prof.includes(professorName) || professorName.includes(prof);
+    }).map(t => ({
+      curso: normalizeText(t.nome),
+      unidade: normalizeText(t.unidade)
+    }));
+  }, [turmas, isProfessor, professorName]);
+
+  const canEdit = isProfessor || isGestorOrCoordenador;
+
   const formatEscolaridade = (exp: any) => {
-    // Tenta pegar diretamente da coluna Estagio/AnoEscolar (que vira estagioanoescolar)
-    const estagio = (exp.estagioanoescolar || exp.etapaescolar || exp.estagio || exp.etapa || '').toUpperCase().trim();
+    // Tenta pegar de campos diretos ou de campos da planilha normalizados
+    const estagio = (exp.sigla || exp.estagioanoescolar || exp.etapaescolar || exp.estagio || exp.etapa || '').toUpperCase().trim();
     const turmaEscolar = (exp.turmaescolar || exp.turmaEscolar || '').toUpperCase().trim();
-
     if (!estagio) return '';
     return `${estagio}${turmaEscolar ? ' ' + turmaEscolar : ''}`.trim();
   };
 
   const filteredExperimentais = useMemo(() => {
     const unidadestr = currentUser.unidade || '';
-    const userUnits = normalizeText(unidadestr).split(',').map(u => u.trim());
+    const userUnits = normalizeText(unidadestr).split(',').map(u => u.trim()).filter(u => u !== "");
+    const regenteNameNorm = normalizeText(currentUser.nome || '');
 
     return experimentais.filter(exp => {
-      if (unidadestr !== 'TODAS') {
-        const expUnit = normalizeText(exp.unidade);
+      const expUnit = normalizeText(exp.unidade);
+      const expCurso = normalizeText(exp.curso);
+      const expEscolaridadeNorm = normalizeText(formatEscolaridade(exp));
+
+      // Regra para Regente: Só vê estudantes da sua escolaridade (Nome do usuário == Sigla)
+      if (isRegente) {
+        if (expEscolaridadeNorm !== regenteNameNorm && !expEscolaridadeNorm.includes(regenteNameNorm) && !regenteNameNorm.includes(expEscolaridadeNorm)) {
+          return false;
+        }
+        // Se houver unidades habilitadas no perfil, filtra também por unidade
+        if (userUnits.length > 0 && !userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) {
+          return false;
+        }
+      } 
+      // Lógica de Acesso para Professor: 
+      else if (isProfessor) {
+        const isMyClass = professorAssignments.some(assign => 
+          (expCurso.includes(assign.curso) || assign.curso.includes(expCurso)) && 
+          (expUnit === assign.unidade || expUnit.includes(assign.unidade) || assign.unidade.includes(expUnit))
+        );
+        if (!isMyClass) return false;
+      } 
+      // Filtro para Gestores/Coordenadores por Unidade
+      else if (unidadestr !== 'TODAS' && userUnits.length > 0) {
         if (!userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) return false;
       }
 
@@ -98,7 +132,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
       const expDate = String(exp.aula || '').split(' ')[0];
       return expDate === selectedDate;
     }).sort((a, b) => a.estudante.localeCompare(b.estudante));
-  }, [experimentais, selectedDate, currentUser]);
+  }, [experimentais, selectedDate, currentUser, isProfessor, isRegente, isGestorOrCoordenador, professorAssignments]);
 
   const handleLocalStatusUpdate = (id: string, newStatus: string) => {
     if (!canEdit) return;
@@ -141,15 +175,12 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     const estudantePrimeiroNome = (exp.estudante || '').trim().split(' ')[0] || '';
     const unidade = exp.unidade || '';
     const curso = exp.curso || (exp as any).modalidade || '';
-    
     const template = isLembrete ? msgLembreteTemplate : msgTemplate;
-
     let msg = (template || '')
       .replace(/{{responsavel}}/g, primeiroNomeResponsavel)
       .replace(/{{estudante}}/g, estudantePrimeiroNome)
       .replace(/{{unidade}}/g, unidade)
       .replace(/{{curso}}/g, curso);
-    
     setMessageModal({ isOpen: true, exp, message: msg, isLembrete });
   };
 
@@ -157,35 +188,23 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     if (!messageModal.exp) return;
     setIsSending(true);
     const fone = (messageModal.exp.whatsapp1 || '').replace(/\D/g, '');
-    
     try {
       if (whatsappConfig?.url && fone) {
         await fetch(whatsappConfig.url, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'apikey': whatsappConfig.token || '' 
-          },
+          headers: { 'Content-Type': 'application/json', 'apikey': whatsappConfig.token || '' },
           body: JSON.stringify({ "data.contact.Phone[0]": `55${fone}`, "message": messageModal.message })
         });
       } else if (fone) {
         window.open(`https://wa.me/55${fone}?text=${encodeURIComponent(messageModal.message)}`, '_blank');
       }
-
       if (messageModal.isLembrete) {
-        const updatedExp: AulaExperimental = {
-          ...messageModal.exp,
-          lembreteEnviado: true
-        };
+        const updatedExp: AulaExperimental = { ...messageModal.exp, lembreteEnviado: true };
         await onUpdate(updatedExp);
       } else {
-        const updatedExp: AulaExperimental = {
-            ...messageModal.exp,
-            followUpSent: true
-        };
+        const updatedExp: AulaExperimental = { ...messageModal.exp, followUpSent: true };
         await onUpdate(updatedExp);
       }
-
       setMessageModal({ ...messageModal, isOpen: false });
     } catch (e) { alert("Erro ao enviar."); } finally { setIsSending(false); }
   };
@@ -204,7 +223,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
           <p className="text-slate-500 italic font-medium">Mapeamento nominal para aulas experimentais agendadas.</p>
         </div>
       </div>
-
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
         <div className="max-w-xs w-full">
           <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Data da Aula Experimental</label>
@@ -225,7 +243,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
            </div>
         </div>
       </div>
-
       <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden min-h-[400px]">
         <div className="p-6 bg-[#0f172a] text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -240,7 +257,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
             </div>
           </div>
         </div>
-
         <div className="divide-y divide-slate-50">
           {filteredExperimentais.length > 0 ? filteredExperimentais.map((exp) => {
             const hasLocalChanges = !!localChanges[exp.id];
@@ -249,7 +265,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
             const lembreteOk = exp.lembreteEnviado;
             const escolaridade = formatEscolaridade(exp);
             const modalidade = exp.curso || (exp as any).modalidade || '';
-
             return (
               <div key={exp.id} className={`group transition-all ${expandedId === exp.id ? 'bg-slate-50/50' : 'hover:bg-slate-50/30'}`}>
                 <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -267,26 +282,17 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                            <MapPin className="w-3.5 h-3.5 text-blue-500" />
                            <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{exp.unidade}</span>
                         </div>
-
-                        {/* ESCOLARIDADE (COLUNAS E e F) - SEM RÓTULO FIXO */}
                         <div className="flex items-center gap-1.5 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100 shadow-sm">
                            <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-                           <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">
-                             {escolaridade || '--'}
-                           </span>
+                           <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{escolaridade || '--'}</span>
                         </div>
-
-                        {/* MODALIDADE (COLUNA H) - SEM RÓTULO FIXO */}
                         <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 shadow-sm">
                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-                           <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest leading-none">
-                             {modalidade || '--'}
-                           </span>
+                           <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest leading-none">{modalidade || '--'}</span>
                         </div>
                       </div>
                     </div>
                   </div>
-
                   <div className="flex items-center gap-4">
                     <button 
                       onClick={() => openComposeModal(exp, true)}
@@ -297,7 +303,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       <Bell className={`w-4 h-4 ${lembreteOk ? '' : 'animate-pulse'}`} />
                       <span className="text-[10px] font-black uppercase">{lembreteOk ? 'ENVIADO' : 'LEMBRETE'}</span>
                     </button>
-
                     <div className="flex flex-col items-center">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">PRESENÇA</span>
                       <div className="flex gap-2">
@@ -325,7 +330,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                     </button>
                   </div>
                 </div>
-
                 {expandedId === exp.id && (
                   <div className="px-6 pb-8 pt-2 animate-in slide-in-from-top-4 flex flex-col md:flex-row gap-8">
                     <div className="flex-1 space-y-4">
@@ -334,7 +338,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                              <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Observação da Aula Experimental
                            </p>
-                           {isRegente && <span className="text-[8px] font-black text-amber-500 uppercase bg-amber-50 px-2 py-1 rounded border border-amber-100 flex items-center gap-1"><Info className="w-3 h-3" /> Somente Professor</span>}
                          </div>
                          <textarea 
                             value={currentFeedback}
@@ -391,19 +394,18 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                   <Search className="w-10 h-10" />
                </div>
                <h4 className="text-xl font-black text-slate-400 uppercase tracking-tight">Nenhum agendamento encontrado</h4>
-               <p className="text-slate-300 text-xs font-bold mt-2 max-w-xs mx-auto uppercase">
-                 Nenhum lead experimental para esta data na planilha.
+               <p className="text-slate-300 text-sm mt-1">
+                 {isProfessor ? 'Não localizamos leads agendados para as turmas onde você é professor nesta data.' : 'Nenhum lead agendado para os critérios selecionados.'}
                </p>
             </div>
           )}
         </div>
       </div>
-
       {messageModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-10 animate-in zoom-in-95 duration-300 border border-slate-100">
             <div className="flex items-center gap-5 mb-8">
-              <div className={`w-14 h-14 flex items-center justify-center ${messageModal.isLembrete ? 'bg-amber-500 shadow-amber-500/20' : 'bg-[#0f172a] shadow-slate-900/20'} text-white rounded-[20px] shadow-lg`}>
+              <div className={`w-14 h-14 flex items-center justify-center ${messageModal.isLembrete ? 'bg-amber-500' : 'bg-[#0f172a]'} text-white rounded-[20px]`}>
                 {messageModal.isLembrete ? <Bell className="w-7 h-7" /> : <MessageCircle className="w-7 h-7" />}
               </div>
               <div>
@@ -411,21 +413,16 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{messageModal.exp?.estudante}</p>
               </div>
             </div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest">Visualização da Mensagem</label>
             <textarea 
               value={messageModal.message} 
               onChange={(e) => setMessageModal({...messageModal, message: e.target.value})} 
               className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] h-48 mb-8 font-medium text-sm outline-none focus:border-indigo-500 transition-all resize-none shadow-inner" 
             />
-            <button 
-              onClick={handleSendMessage} 
-              disabled={isSending} 
-              className={`w-full ${messageModal.isLembrete ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'} text-white py-6 rounded-3xl font-black text-sm flex items-center justify-center gap-4 shadow-2xl transition-all active:scale-[0.98] uppercase tracking-widest`}
-            >
+            <button onClick={handleSendMessage} disabled={isSending} className={`w-full ${messageModal.isLembrete ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white py-6 rounded-3xl font-black text-sm flex items-center justify-center gap-4 transition-all active:scale-[0.98]`}>
               {isSending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Zap className="w-6 h-6 fill-current" />} 
-              {isSending ? 'DISPARANDO MENSAGEM...' : 'CONFIRMAR E ENVIAR WHATSAPP'}
+              {isSending ? 'ENVIANDO...' : 'ENVIAR WHATSAPP'}
             </button>
-            <button onClick={() => setMessageModal({...messageModal, isOpen: false})} className="w-full mt-6 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors">Fechar sem enviar</button>
+            <button onClick={() => setMessageModal({...messageModal, isOpen: false})} className="w-full mt-6 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fechar</button>
           </div>
         </div>
       )}

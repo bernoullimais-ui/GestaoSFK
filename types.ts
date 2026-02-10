@@ -41,6 +41,7 @@ export interface Turma {
   horario: string;
   professor: string;
   capacidade?: number;
+  valorMensal?: number;
 }
 
 export interface Matricula {
@@ -66,7 +67,7 @@ export interface Usuario {
   login: string;
   senha?: string;
   unidade: string; // 'TODAS' para Master ou nome da unidade específica
-  nivel: 'Professor' | 'Gestor' | 'Regente' | 'Estagiário' | 'Gestor Master' | 'Start';
+  nivel: 'Professor' | 'Gestor' | 'Regente' | 'Estagiário' | 'Gestor Master' | 'Start' | 'Coordenador';
 }
 
 export interface AulaExperimental {
@@ -90,4 +91,4 @@ export interface AulaExperimental {
   turmaEscolar?: string;
 }
 
-export type ViewType = 'dashboard' | 'alunos' | 'frequencia' | 'relatorios' | 'turmas' | 'usuarios' | 'preparacao' | 'experimental' | 'dados-alunos' | 'churn-risk' | 'settings';
+export type ViewType = 'dashboard' | 'alunos' | 'frequencia' | 'relatorios' | 'turmas' | 'usuarios' | 'preparacao' | 'experimental' | 'dados-alunos' | 'churn-risk' | 'settings' | 'financeiro';
