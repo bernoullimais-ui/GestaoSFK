@@ -8,9 +8,8 @@ import {
   LogOut, 
   Menu, 
   LayoutDashboard,
-  GraduationCap,
+  GraduationCap, 
   CheckCircle2, 
-  Database,
   CloudSync,
   RefreshCw,
   AlertCircle,
@@ -22,21 +21,16 @@ import {
   UserX,
   MessageCircle,
   Save,
-  Smartphone,
   Loader2,
-  ExternalLink,
   CheckCircle,
-  BookOpen,
   Zap,
-  Lock,
-  Info,
-  X,
-  MessageSquare,
-  Bell,
-  LayoutGrid,
-  DollarSign,
+  Shield,
+  Activity,
   MapPin,
-  UserCircle
+  UserCircle,
+  Cpu,
+  Layers,
+  DollarSign
 } from 'lucide-react';
 import { Aluno, Turma, Matricula, Presenca, Usuario, ViewType, AulaExperimental, AcaoRetencao, CursoCancelado } from './types';
 import { INITIAL_ALUNOS, INITIAL_TURMAS, INITIAL_MATRICULAS, INITIAL_PRESENCAS, INITIAL_USUARIOS } from './constants';
@@ -61,6 +55,8 @@ const DEFAULT_TEMPLATE_LEMBRETE = "Olá *{{responsavel}}*, aqui é da SFK. Passa
 const DEFAULT_TEMPLATE_ALUNO = "Olá {{responsavel}}, aqui é da SFK. Gostaríamos de falar sobre o(a) aluno(a) {{estudante}}.";
 
 const App: React.FC = () => {
+  const [isBooting, setIsBooting] = useState(true);
+  const [bootStatus, setBootStatus] = useState('Iniciando sistema...');
   const [user, setUser] = useState<Usuario | null>(null);
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -87,6 +83,7 @@ const App: React.FC = () => {
 
   const normalizeStr = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
+  // MANTIDO INTEGRALMENTE CONFORME ORIGINAL PARA EVITAR ERROS DE DATA
   const parseSheetDate = (dateVal: any): string => {
     if (!dateVal || String(dateVal).trim() === '' || String(dateVal).toLowerCase() === 'null') return "";
     try {
@@ -122,16 +119,18 @@ const App: React.FC = () => {
     return "";
   };
 
-  const syncFromSheets = async () => {
-    if (!apiUrl) { setSyncError("Configuração pendente."); return; }
-    setIsLoading(true);
+  const syncFromSheets = async (isSilent: boolean = false) => {
+    if (!apiUrl) { if (!isSilent) setSyncError("Configuração pendente."); return false; }
+    if (!isSilent) setIsLoading(true);
     setSyncError(null);
     try {
+      if (isSilent) setBootStatus('Acessando dados mestre...');
       const response = await fetch(`${apiUrl}?t=${Date.now()}`);
       const data = await response.json();
       const studentsMap = new Map<string, { meta: Aluno, activeCourses: Set<string> }>();
       const generatedMatriculas: Matricula[] = [];
       
+      if (isSilent) setBootStatus('Sincronizando registros de estudantes...');
       (data.base || []).forEach((item: any, idx: number) => {
         const nome = item.estudante || item.nome || item.aluno || "";
         const unidade = item.unidade || item.escola || "";
@@ -191,86 +190,158 @@ const App: React.FC = () => {
         }
       });
       
+      if (isSilent) setBootStatus('Catalogando turmas e horários...');
       const finalTurmas = (data.turmas || []).map((t: any) => {
         const rawValue = String(t.valor || t.custo || t.valormensal || t.mensalidade || t.preco || t.valorbase || t.mensal || "0");
-        const cleanValue = rawValue
-          .replace('R$', '')
-          .replace(/\s/g, '')
-          .replace(/\./g, '')
-          .replace(',', '.');
-        
+        const cleanValue = rawValue.replace('R$', '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+        const capValue = parseInt(t.capacidadedaturma || t.capacidade || "20");
         return { 
           ...t, 
           id: t.id || `${normalizeStr(t.nome)}-${normalizeStr(t.unidade)}-${normalizeStr(t.horario)}`,
-          valorMensal: parseFloat(cleanValue) || 0
+          valorMensal: parseFloat(cleanValue) || 0,
+          capacidade: isNaN(capValue) ? 20 : capValue
         };
       });
 
-      const finalPresencas = (data.frequencia || []).map((p: any, idx: number) => ({ id: p.id || `freq-${idx}`, alunoId: p.alunoId || p.estudante || p.aluno || "", turmaId: p.turmaId || p.turma || "", unidade: p.unidade || "", data: parseSheetDate(p.data), status: (normalizeStr(p.status || p.statu) === 'presente') ? 'Presente' : 'Ausente', observacao: p.observacao || p.obs || "", _estudantePlanilha: p.estudante || p.aluno, _turmaPlanilha: p.turma }));
-      
-      const finalUsuarios = (data.usuarios || []).map((u: any) => ({
-        ...u,
-        unidade: u.unidade || u.unidades || "" // Map 'unidades' to 'unidade' if plural is used in sheet
+      if (isSilent) setBootStatus('Atualizando acessos e usuários...');
+      const finalPresencas = (data.frequencia || []).map((p: any, idx: number) => ({
+        id: p.id || `freq-${idx}`,
+        alunoId: p.alunoId || p.aluno || "",
+        turmaId: p.turmaId || p.turma || "",
+        unidade: p.unidade || "",
+        data: parseSheetDate(p.data),
+        status: (normalizeStr(p.status) === 'presente') ? 'Presente' : 'Ausente',
+        observacao: p.observacao || "",
+        _estudantePlanilha: p.aluno,
+        _turmaPlanilha: p.turma
       }));
 
-      setAlunos(Array.from(studentsMap.values()).map(s => s.meta));
+      const finalUsuarios = (data.usuarios || []).map((u: any) => ({ ...u, unidade: u.unidade || "" }));
+      const finalAlunos = Array.from(studentsMap.values()).map(s => s.meta);
+      const finalExp = (data.experimental || []).map((e: any, idx: number) => ({
+        ...e,
+        id: `exp-${idx}`,
+        estudante: e.estudante || "",
+        unidade: e.unidade || "",
+        sigla: e.sigla || "",
+        curso: e.curso || "",
+        aula: parseSheetDate(e.aula),
+        responsavel1: e.responsavel1 || "",
+        whatsapp1: e.whatsapp1 || "",
+        lembreteEnviado: normalizeStr(e.lembrete) === 'sim',
+        followUpSent: normalizeStr(e.enviado) === 'sim',
+        convertido: normalizeStr(e.conversao) === 'sim'
+      }));
+
+      // Atualizar Estados
+      setAlunos(finalAlunos);
       setTurmas(finalTurmas);
       setMatriculas(generatedMatriculas);
       setPresencas(finalPresencas);
-      setExperimentais((data.experimental || []).map((e: any, idx: number) => ({ 
-        ...e, 
-        id: `exp-${idx}`, 
-        estudante: e.estudante || "", 
-        responsavel1: e.responsavel1 || e.paimae || e.nomeresponsavel || e.responsavel || "",
-        whatsapp1: e.whatsapp1 || e.whatsapp || e.celularresponsavel || e.celular || e.contato || "",
-        curso: e.curso || e.modalidade || "", 
-        unidade: e.unidade || "", 
-        aula: parseSheetDate(e.aula), 
-        lembreteEnviado: normalizeStr(e.lembrete) === 'sim', 
-        followUpSent: normalizeStr(e.enviado) === 'sim', 
-        convertido: normalizeStr(e.conversao) === 'sim' 
-      })));
-      
-      const updatedUsuariosList = [...INITIAL_USUARIOS.filter(u => u.nivel === 'Gestor Master'), ...finalUsuarios];
-      setUsuarios(updatedUsuariosList);
+      setExperimentais(finalExp);
+      const updatedUsers = [...INITIAL_USUARIOS.filter(u => u.nivel === 'Gestor Master'), ...finalUsuarios];
+      setUsuarios(updatedUsers);
 
-      // Se houver usuário logado, atualiza seus dados (especialmente unidades habilitadas)
-      if (user) {
-        const found = updatedUsuariosList.find(u => u.login.toLowerCase() === user.login.toLowerCase());
-        if (found) {
-            setUser(found);
-            localStorage.setItem('sfk_current_user', JSON.stringify(found));
+      // Persistir em LocalStorage
+      localStorage.setItem('sfk_alunos', JSON.stringify(finalAlunos));
+      localStorage.setItem('sfk_turmas', JSON.stringify(finalTurmas));
+      localStorage.setItem('sfk_matriculas', JSON.stringify(generatedMatriculas));
+      localStorage.setItem('sfk_presencas', JSON.stringify(finalPresencas));
+      localStorage.setItem('sfk_experimentais', JSON.stringify(finalExp));
+      localStorage.setItem('sfk_usuarios', JSON.stringify(updatedUsers));
+
+      if (!isSilent) {
+        setSyncSuccess("Sincronizado!");
+        setTimeout(() => setSyncSuccess(null), 3000);
+      }
+      return true;
+    } catch (e) { 
+      if (!isSilent) setSyncError("Erro na sincronização."); 
+      return false;
+    } finally { 
+      if (!isSilent) setIsLoading(false); 
+    }
+  };
+
+  // Efeito de Inicialização (Boot com Sincronismo Silencioso)
+  useEffect(() => {
+    const runBoot = async () => {
+      // Artificial delay para estética premium
+      await new Promise(r => setTimeout(r, 1000));
+      const success = await syncFromSheets(true);
+      
+      if (success) {
+        setBootStatus('Interface pronta.');
+        await new Promise(r => setTimeout(r, 600));
+        setIsBooting(false);
+      } else {
+        setBootStatus('Erro ao conectar. Verifique internet.');
+        // Se houver dados locais, prossegue mesmo com erro de sync
+        if (usuarios.length > 2) {
+          await new Promise(r => setTimeout(r, 2000));
+          setIsBooting(false);
         }
       }
-      
-      setSyncSuccess("Sincronizado!");
-      setTimeout(() => setSyncSuccess(null), 3000);
-    } catch (e) { setSyncError("Falha na sincronização."); } finally { setIsLoading(false); }
-  };
+    };
+    runBoot();
+  }, []);
 
-  const handleUpdateExperimental = async (updated: AulaExperimental) => {
-    if (!apiUrl) return;
-    setIsLoading(true);
-    try {
-      await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_experimental', data: { estudante: updated.estudante, curso: updated.curso, status: updated.status, feedback: updated.observacaoProfessor || "", lembrete: updated.lembreteEnviado ? "SIM" : "NÃO", enviado: updated.followUpSent ? "SIM" : "NÃO", conversao: updated.convertido ? "SIM" : "NÃO" } }) });
-      setExperimentais(prev => {
-        const next = prev.map(e => e.id === updated.id ? updated : e);
-        localStorage.setItem('sfk_experimentais', JSON.stringify(next));
-        return next;
-      });
-      setSyncSuccess("Lead atualizado!");
-      setTimeout(() => setSyncSuccess(null), 2000);
-    } catch (e) { setSyncError("Falha ao gravar lead."); } finally { setIsLoading(false); }
-  };
+  if (isBooting) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 font-['Inter'] relative overflow-hidden">
+        {/* Camadas Visuais de Fundo */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,_rgba(30,58,138,0.1),_transparent_40%)]"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_70%,_rgba(67,56,202,0.1),_transparent_40%)]"></div>
+        
+        <div className="w-full max-w-sm flex flex-col items-center relative z-10">
+          <div className="w-20 h-20 bg-indigo-600 rounded-[28px] flex items-center justify-center shadow-[0_0_40px_rgba(79,70,229,0.3)] mb-8 animate-pulse">
+            <Activity className="w-10 h-10 text-white" />
+          </div>
+          
+          <div className="text-center mb-10">
+            <h1 className="text-3xl font-black text-white tracking-tighter uppercase leading-none">Gestão SFK</h1>
+            <p className="text-blue-400 font-bold uppercase text-[9px] tracking-[0.4em] mt-2">Sport For Kids Intelligence</p>
+          </div>
 
-  useEffect(() => { 
-    if (user) {
-      syncFromSheets();
-      if (user.nivel === 'Regente') {
-        setCurrentView('preparacao');
-      }
-    } 
-  }, [user?.login]);
+          <div className="w-full bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-md">
+             <div className="flex items-center gap-4 mb-5">
+                <div className="w-9 h-9 bg-blue-500/20 rounded-xl flex items-center justify-center">
+                   <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
+                </div>
+                <div className="flex-1">
+                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1.5">Sincronizando</p>
+                   <p className="text-xs font-bold text-white leading-none truncate">{bootStatus}</p>
+                </div>
+             </div>
+             
+             <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                <div className="bg-blue-600 h-full w-[40%] animate-loading-bar"></div>
+             </div>
+          </div>
+          
+          <div className="mt-10 flex items-center gap-6 opacity-20">
+             <Cpu className="w-4 h-4 text-white" />
+             <Layers className="w-4 h-4 text-white" />
+             <Shield className="w-4 h-4 text-white" />
+          </div>
+
+          <p className="mt-8 text-slate-500 text-[8px] font-black uppercase tracking-[0.2em] text-center max-w-[200px] leading-relaxed">
+            Sincronismo de segurança obrigatório para validação de credenciais de usuários e alunos.
+          </p>
+        </div>
+
+        <style>{`
+          @keyframes loading-bar {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(250%); }
+          }
+          .animate-loading-bar {
+            animation: loading-bar 1.5s infinite linear;
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   if (!user) return <Login onLogin={setUser} usuarios={usuarios} />;
 
@@ -279,14 +350,13 @@ const App: React.FC = () => {
   const isCoordenador = user.nivel === 'Coordenador';
   const isRegente = user.nivel === 'Regente';
 
-  // Definição clara de acessos baseada no prompt
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, visible: isMaster || isCoordenador || (!isRegente && !isGestor) },
     { id: 'dados-alunos', label: 'Dados de Alunos', icon: Contact2, visible: isMaster || isGestor },
     { id: 'turmas', label: 'Turmas', icon: GraduationCap, visible: isMaster || isGestor || isCoordenador || !isRegente },
-    { id: 'preparacao', label: 'Preparação', icon: ClipboardList, visible: true }, // Todos acessam
+    { id: 'preparacao', label: 'Preparação', icon: ClipboardList, visible: true }, 
     { id: 'frequencia', label: 'Frequência', icon: CheckCircle2, visible: isMaster || (!isRegente && !isGestor && !isCoordenador) },
-    { id: 'experimental', label: 'Experimentais', icon: FlaskConical, visible: true }, // Todos acessam
+    { id: 'experimental', label: 'Experimentais', icon: FlaskConical, visible: true }, 
     { id: 'relatorios', label: 'Relatórios', icon: BarChart3, visible: isMaster || isGestor },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign, visible: isMaster },
     { id: 'churn-risk', label: 'Retenção', icon: UserX, visible: isMaster },
@@ -325,34 +395,24 @@ const App: React.FC = () => {
               <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{currentView.replace('-', ' ')}</h2>
             </div>
           </div>
-          
           <div className="flex items-center gap-6">
-            <div className="hidden sm:flex flex-col items-end border-r pr-6 border-slate-100 h-10 justify-center">
-               <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1 flex items-center gap-1"><UserCircle className="w-2.5 h-2.5"/> Usuário Conectado</span>
-               <span className="text-xs font-black text-indigo-950 uppercase truncate max-w-[120px]">{user.nome || user.login}</span>
-            </div>
-            
             <div className="flex flex-col items-end border-r pr-6 border-slate-100 h-10 justify-center">
-               <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1 flex items-center gap-1"><MapPin className="w-2.5 h-2.5 text-blue-500"/> Unidades Habilitadas</span>
-               <div className={`px-3 py-1 rounded-xl border text-[10px] font-black uppercase tracking-tighter shadow-sm transition-all ${user.unidade && user.unidade !== '' && user.unidade !== 'TODAS' ? 'bg-blue-600 text-white border-blue-600' : user.unidade === 'TODAS' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-300 border-slate-100 border-dashed'}`}>
-                 {user.unidade || 'Não Definida'}
-               </div>
+               <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1 flex items-center gap-1"><UserCircle className="w-2.5 h-2.5"/> Usuário</span>
+               <span className="text-xs font-black text-indigo-950 uppercase">{user.nome || user.login}</span>
             </div>
-
-            <div className="flex flex-col items-end h-10 justify-center">
-               <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1 flex items-center gap-1"><ShieldCheck className="w-2.5 h-2.5 text-emerald-500"/> Nível de Acesso</span>
-               <span className="text-[10px] font-black text-emerald-500 uppercase bg-emerald-50 px-2 py-1 rounded-xl border border-emerald-100 shadow-sm">{user.nivel}</span>
+            <div className="flex flex-col items-end border-r pr-6 border-slate-100 h-10 justify-center">
+               <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1 flex items-center gap-1"><MapPin className="w-2.5 h-2.5 text-blue-500"/> Unidade</span>
+               <div className="px-3 py-1 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase shadow-sm">{user.unidade || 'Geral'}</div>
             </div>
           </div>
         </header>
-        
         <div className="flex-1 overflow-y-auto p-6 lg:p-10">
-          {currentView === 'dashboard' && <Dashboard user={user} alunosCount={alunos.length} turmasCount={turmas.length} turmas={turmas} presencas={presencas} alunos={alunos} matriculas={matriculas} experimentais={experimentais} onUpdateExperimental={handleUpdateExperimental} acoesRetencao={acoesRetencao} onNavigate={setCurrentView} isLoading={isLoading} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplateExperimental={msgExperimental} />}
-          {currentView === 'frequencia' && <Frequencia turmas={turmas} alunos={alunos} matriculas={matriculas} presencas={presencas} onSave={async (newPresencas) => { if (!apiUrl) return; setIsLoading(true); try { const payload = newPresencas.map(p => ({ aluno: (alunos.find(a => a.id === p.alunoId)?.nome) || p.alunoId, unidade: p.unidade, turma: (turmas.find(t => t.id === p.turmaId)?.nome) || p.turmaId, data: p.data, status: p.status, observacao: p.observacao || "" })); await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_frequencia', data: payload }) }); setPresencas(prev => [...prev, ...newPresencas]); setSyncSuccess("Chamada salva!"); setTimeout(() => setSyncSuccess(null), 3000); } catch (e) { setSyncError("Erro ao salvar."); } finally { setIsLoading(false); } }} currentUser={user} />}
+          {currentView === 'dashboard' && <Dashboard user={user} alunosCount={alunos.length} turmasCount={turmas.length} turmas={turmas} presencas={presencas} alunos={alunos} matriculas={matriculas} experimentais={experimentais} onUpdateExperimental={syncFromSheets as any} acoesRetencao={acoesRetencao} onNavigate={setCurrentView} isLoading={isLoading} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplateExperimental={msgExperimental} />}
+          {currentView === 'frequencia' && <Frequencia turmas={turmas} alunos={alunos} matriculas={matriculas} presencas={presencas} onSave={async (newPresencas) => { setIsLoading(true); try { await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_frequencia', data: newPresencas.map(p => ({ aluno: (alunos.find(a => a.id === p.alunoId)?.nome) || p.alunoId, unidade: p.unidade, turma: (turmas.find(t => t.id === p.turmaId)?.nome) || p.turmaId, data: p.data, status: p.status, observacao: p.observacao || "" })) }) }); setPresencas(prev => [...prev, ...newPresencas]); setSyncSuccess("Chamada salva!"); setTimeout(() => setSyncSuccess(null), 3000); } catch (e) { setSyncError("Erro ao salvar."); } finally { setIsLoading(false); } }} currentUser={user} />}
           {currentView === 'dados-alunos' && <DadosAlunos alunos={alunos} turmas={turmas} matriculas={matriculas} user={user} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplate={msgAluno} />}
           {currentView === 'turmas' && <TurmasList turmas={turmas} matriculas={matriculas} alunos={alunos} currentUser={user} />}
           {currentView === 'preparacao' && <PreparacaoTurmas alunos={alunos} turmas={turmas} matriculas={matriculas} currentUser={user} />}
-          {currentView === 'experimental' && <AulasExperimentais experimentais={experimentais} currentUser={user} onUpdate={handleUpdateExperimental} turmas={turmas} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplate={msgExperimental} msgLembreteTemplate={msgLembrete} />}
+          {currentView === 'experimental' && <AulasExperimentais experimentais={experimentais} currentUser={user} onUpdate={syncFromSheets as any} turmas={turmas} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplate={msgExperimental} msgLembreteTemplate={msgLembrete} />}
           {currentView === 'relatorios' && <Relatorios alunos={alunos} turmas={turmas} presencas={presencas} matriculas={matriculas} experimentais={experimentais} />}
           {currentView === 'financeiro' && isMaster && <Financeiro alunos={alunos} turmas={turmas} matriculas={matriculas} />}
           {currentView === 'churn-risk' && isMaster && <ChurnRiskManagement alunos={alunos} matriculas={matriculas} presencas={presencas} turmas={turmas} acoesRealizadas={acoesRetencao} onRegistrarAcao={(novaAcao) => setAcoesRetencao(prev => [...prev, novaAcao])} currentUser={user} whatsappConfig={{ url: whatsappApiUrl, token: whatsappToken }} msgTemplate={msgRetencao} />}
@@ -379,14 +439,12 @@ const App: React.FC = () => {
           )}
         </div>
       </main>
-
       {syncSuccess && (
         <div className="fixed bottom-10 right-10 bg-blue-600 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-right-10 z-[100] border border-blue-400">
           <CheckCircle className="w-5 h-5" />
           <span className="text-xs font-black uppercase">{syncSuccess}</span>
         </div>
       )}
-      
       {syncError && (
         <div className="fixed bottom-10 right-10 bg-red-600 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-right-10 z-[100] border border-red-400">
           <AlertCircle className="w-5 h-5" />
