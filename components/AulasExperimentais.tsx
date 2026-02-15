@@ -31,12 +31,14 @@ import {
   Loader2,
   CalendarCheck,
   BookOpen,
-  LayoutGrid
+  LayoutGrid,
+  History
 } from 'lucide-react';
-import { AulaExperimental, Usuario, Turma } from '../types';
+import { AulaExperimental, Usuario, Turma, Aluno } from '../types';
 
 interface AulasExperimentaisProps {
   experimentais: AulaExperimental[];
+  alunosAtivos: Aluno[]; // Adicionado para permitir o cruzamento inteligente
   currentUser: Usuario;
   onUpdate: (updated: AulaExperimental) => void;
   turmas: Turma[];
@@ -50,6 +52,7 @@ interface AulasExperimentaisProps {
 
 const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({ 
   experimentais, 
+  alunosAtivos,
   currentUser, 
   onUpdate,
   turmas,
@@ -64,16 +67,16 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const [localChanges, setLocalChanges] = useState<Record<string, { status?: string, feedback?: string }>>({});
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string; isLembrete: boolean }>({ isOpen: false, exp: null, message: '', isLembrete: false });
 
-  const isGestorOrCoordenador = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Coordenador';
+  const normalizeText = (t: string) => 
+    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
+
+  const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start' || normalizeText(currentUser.unidade) === 'todas';
+  const isGestorOrCoordenador = currentUser.nivel === 'Gestor' || isMaster || currentUser.nivel === 'Coordenador';
   const isRegente = currentUser.nivel === 'Regente';
   const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
   
-  const normalizeText = (t: string) => 
-    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
-  
   const professorName = normalizeText(currentUser.nome || currentUser.login);
 
-  // Mapeia quais cursos e unidades este professor atende
   const professorAssignments = useMemo(() => {
     if (!isProfessor) return [];
     return turmas.filter(t => {
@@ -88,7 +91,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const canEdit = isProfessor || isGestorOrCoordenador;
 
   const formatEscolaridade = (exp: any) => {
-    // Tenta pegar de campos diretos ou de campos da planilha normalizados
     const estagio = (exp.sigla || exp.estagioanoescolar || exp.etapaescolar || exp.estagio || exp.etapa || '').toUpperCase().trim();
     const turmaEscolar = (exp.turmaescolar || exp.turmaEscolar || '').toUpperCase().trim();
     if (!estagio) return '';
@@ -105,36 +107,34 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
       const expCurso = normalizeText(exp.curso);
       const expEscolaridadeNorm = normalizeText(formatEscolaridade(exp));
 
-      // Regra para Regente: Só vê estudantes da sua escolaridade (Nome do usuário == Sigla)
-      if (isRegente) {
-        if (expEscolaridadeNorm !== regenteNameNorm && !expEscolaridadeNorm.includes(regenteNameNorm) && !regenteNameNorm.includes(expEscolaridadeNorm)) {
-          return false;
+      if (!isMaster) {
+        if (isRegente) {
+          if (expEscolaridadeNorm !== regenteNameNorm && !expEscolaridadeNorm.includes(regenteNameNorm) && !regenteNameNorm.includes(expEscolaridadeNorm)) {
+            return false;
+          }
+          if (userUnits.length > 0 && !userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) {
+            return false;
+          }
+        } 
+        else if (isProfessor) {
+          const isMyClass = professorAssignments.some(assign => 
+            (expCurso.includes(assign.curso) || assign.curso.includes(expCurso)) && 
+            (expUnit === assign.unidade || expUnit.includes(assign.unidade) || assign.unidade.includes(expUnit))
+          );
+          if (!isMyClass) return false;
+        } 
+        else if (unidadestr !== 'TODAS' && userUnits.length > 0) {
+          if (!userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) return false;
         }
-        // Se houver unidades habilitadas no perfil, filtra também por unidade
-        if (userUnits.length > 0 && !userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) {
-          return false;
-        }
-      } 
-      // Lógica de Acesso para Professor: 
-      else if (isProfessor) {
-        const isMyClass = professorAssignments.some(assign => 
-          (expCurso.includes(assign.curso) || assign.curso.includes(expCurso)) && 
-          (expUnit === assign.unidade || expUnit.includes(assign.unidade) || assign.unidade.includes(expUnit))
-        );
-        if (!isMyClass) return false;
-      } 
-      // Filtro para Gestores/Coordenadores por Unidade
-      else if (unidadestr !== 'TODAS' && userUnits.length > 0) {
-        if (!userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) return false;
       }
 
       if (!selectedDate) return true;
       const expDate = String(exp.aula || '').split(' ')[0];
       return expDate === selectedDate;
     }).sort((a, b) => a.estudante.localeCompare(b.estudante));
-  }, [experimentais, selectedDate, currentUser, isProfessor, isRegente, isGestorOrCoordenador, professorAssignments]);
+  }, [experimentais, selectedDate, currentUser, isProfessor, isRegente, isGestorOrCoordenador, isMaster, professorAssignments]);
 
-  const handleLocalStatusUpdate = (id: string, newStatus: string) => {
+  const handleTogglePresenca = (id: string, newStatus: string) => {
     if (!canEdit) return;
     setLocalChanges(prev => ({ ...prev, [id]: { ...prev[id], status: newStatus } }));
   };
@@ -175,12 +175,34 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     const estudantePrimeiroNome = (exp.estudante || '').trim().split(' ')[0] || '';
     const unidade = exp.unidade || '';
     const curso = exp.curso || (exp as any).modalidade || '';
+    
+    let dataAulaFormatada = "";
+    if (exp.aula) {
+      const parts = String(exp.aula).split(' ')[0].split('-');
+      if (parts.length === 3) {
+        dataAulaFormatada = `${parts[2]}/${parts[1]}/${parts[0]}`;
+      } else {
+        dataAulaFormatada = exp.aula;
+      }
+    }
+
     const template = isLembrete ? msgLembreteTemplate : msgTemplate;
-    let msg = (template || '')
-      .replace(/{{responsavel}}/g, primeiroNomeResponsavel)
-      .replace(/{{estudante}}/g, estudantePrimeiroNome)
-      .replace(/{{unidade}}/g, unidade)
-      .replace(/{{curso}}/g, curso);
+    let msg = template || '';
+    
+    const replacements = [
+      { tags: [/{{responsavel}}/gi, /{{RESPONSAVEL}}/gi], value: primeiroNomeResponsavel },
+      { tags: [/{{estudante}}/gi, /{{ALUNO}}/gi, /{{aluno}}/gi], value: estudantePrimeiroNome },
+      { tags: [/{{unidade}}/gi, /{{UNIDADE}}/gi], value: unidade },
+      { tags: [/{{curso}}/gi, /{{CURSO}}/gi], value: curso },
+      { tags: [/{{data}}/gi, /{{DATA}}/gi], value: dataAulaFormatada }
+    ];
+
+    replacements.forEach(rep => {
+      rep.tags.forEach(tag => {
+        msg = msg.replace(tag, rep.value);
+      });
+    });
+
     setMessageModal({ isOpen: true, exp, message: msg, isLembrete });
   };
 
@@ -198,22 +220,31 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
       } else if (fone) {
         window.open(`https://wa.me/55${fone}?text=${encodeURIComponent(messageModal.message)}`, '_blank');
       }
+      
+      const studentKey = `${normalizeText(messageModal.exp.estudante)}-${normalizeStr(messageModal.exp.unidade)}`;
+      const isActuallyInBase = alunosAtivos.some(a => `${normalizeText(a.nome)}-${normalizeStr(a.unidade)}` === studentKey);
+
       if (messageModal.isLembrete) {
-        const updatedExp: AulaExperimental = { ...messageModal.exp, lembreteEnviado: true };
+        const updatedExp: AulaExperimental = { 
+          ...messageModal.exp, 
+          lembreteEnviado: true,
+          followUpSent: false,
+          // Se já estiver na base, não desmarca a conversão para FALSE
+          convertido: isActuallyInBase ? true : false
+        };
         await onUpdate(updatedExp);
       } else {
-        const updatedExp: AulaExperimental = { ...messageModal.exp, followUpSent: true };
+        const updatedExp: AulaExperimental = { 
+          ...messageModal.exp, 
+          followUpSent: true 
+        };
         await onUpdate(updatedExp);
       }
       setMessageModal({ ...messageModal, isOpen: false });
     } catch (e) { alert("Erro ao enviar."); } finally { setIsSending(false); }
   };
 
-  const formatHeaderDate = (isoStr: string) => {
-    if (!isoStr) return "";
-    const [y, m, d] = isoStr.split('-').map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString('pt-BR');
-  };
+  const normalizeStr = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
   return (
     <div className="space-y-6 pb-20">
@@ -250,7 +281,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
               <FlaskConical className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
-              <h3 className="font-black text-lg">{filteredExperimentais.length > 0 ? `Lista para ${formatHeaderDate(selectedDate)}` : 'Aguardando Agendamentos'}</h3>
+              <h3 className="font-black text-lg">{filteredExperimentais.length > 0 ? `Lista para ${new Date(selectedDate).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}` : 'Aguardando Agendamentos'}</h3>
               <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest leading-none mt-1">
                  AGENDAMENTOS DE LEADS
               </p>
@@ -265,6 +296,12 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
             const lembreteOk = exp.lembreteEnviado;
             const escolaridade = formatEscolaridade(exp);
             const modalidade = exp.curso || (exp as any).modalidade || '';
+
+            // Smart Sync Check
+            const studentKey = `${normalizeText(exp.estudante)}-${normalizeStr(exp.unidade)}`;
+            const isActuallyInBase = alunosAtivos.some(a => `${normalizeText(a.nome)}-${normalizeStr(a.unidade)}` === studentKey);
+            const needsSheetUpdate = isActuallyInBase && !exp.convertido;
+
             return (
               <div key={exp.id} className={`group transition-all ${expandedId === exp.id ? 'bg-slate-50/50' : 'hover:bg-slate-50/30'}`}>
                 <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -275,16 +312,20 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h4 className="text-lg font-black text-slate-900 leading-tight truncate pr-4 uppercase" title={exp.estudante}>{exp.estudante}</h4>
-                        {exp.convertido && <span className="bg-emerald-100 text-emerald-700 text-[8px] font-black px-1.5 py-0.5 rounded border border-emerald-200 shrink-0 uppercase">MATRICULADO</span>}
+                        {exp.convertido && (
+                          <button 
+                            onClick={() => needsSheetUpdate && onUpdate({ ...exp, convertido: true })}
+                            className={`px-1.5 py-0.5 rounded border text-[8px] font-black shrink-0 uppercase transition-all ${needsSheetUpdate ? 'bg-amber-100 text-amber-700 border-amber-300 animate-pulse' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}
+                            title={needsSheetUpdate ? "Clique para gravar TRUE na planilha" : "Matrícula confirmada"}
+                          >
+                            {needsSheetUpdate ? 'Confirmar na Planilha' : 'MATRICULADO'}
+                          </button>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-3 mt-2">
                         <div className="flex items-center gap-1.5 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100 shadow-sm">
                            <MapPin className="w-3.5 h-3.5 text-blue-500" />
                            <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{exp.unidade}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100 shadow-sm">
-                           <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-                           <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{escolaridade || '--'}</span>
                         </div>
                         <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 shadow-sm">
                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
@@ -298,7 +339,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       onClick={() => openComposeModal(exp, true)}
                       disabled={lembreteOk}
                       className={`px-6 py-3 rounded-2xl transition-all shadow-sm flex items-center gap-2 border ${lembreteOk ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-amber-50 text-amber-600 hover:bg-amber-100 border-amber-200'}`}
-                      title={lembreteOk ? "Lembrete já enviado" : "Enviar Lembrete de Aula"}
                     >
                       <Bell className={`w-4 h-4 ${lembreteOk ? '' : 'animate-pulse'}`} />
                       <span className="text-[10px] font-black uppercase">{lembreteOk ? 'ENVIADO' : 'LEMBRETE'}</span>
@@ -307,16 +347,16 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">PRESENÇA</span>
                       <div className="flex gap-2">
                         <button 
-                          onClick={() => handleLocalStatusUpdate(exp.id, 'Presente')} 
+                          onClick={() => handleTogglePresenca(exp.id, 'Presente')} 
                           disabled={!canEdit}
-                          className={`p-2.5 rounded-xl border-2 transition-all shadow-sm ${!canEdit ? 'cursor-not-allowed opacity-60' : ''} ${currentStatus === 'Presente' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
+                          className={`p-2.5 rounded-xl border-2 transition-all ${currentStatus === 'Presente' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
                         >
                           <CheckCircle2 className="w-5 h-5" />
                         </button>
                         <button 
-                          onClick={() => handleLocalStatusUpdate(exp.id, 'Ausente')} 
+                          onClick={() => handleTogglePresenca(exp.id, 'Ausente')} 
                           disabled={!canEdit}
-                          className={`p-2.5 rounded-xl border-2 transition-all shadow-sm ${!canEdit ? 'cursor-not-allowed opacity-60' : ''} ${currentStatus === 'Ausente' ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
+                          className={`p-2.5 rounded-xl border-2 transition-all ${currentStatus === 'Ausente' ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
                         >
                           <XCircle className="w-5 h-5" />
                         </button>
@@ -338,6 +378,14 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                              <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Observação da Aula Experimental
                            </p>
+                           {needsSheetUpdate && (
+                             <button 
+                               onClick={() => onUpdate({ ...exp, convertido: true })}
+                               className="bg-amber-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 animate-bounce shadow-lg shadow-amber-200"
+                             >
+                               <History className="w-3.5 h-3.5" /> Gravar TRUE na Planilha
+                             </button>
+                           )}
                          </div>
                          <textarea 
                             value={currentFeedback}

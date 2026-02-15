@@ -39,6 +39,22 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
   const normalizeText = (t: any) => 
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
+  // Função vital para converter strings de moeda em números operáveis
+  const parseCurrency = (val: any): number => {
+    if (val === undefined || val === null || val === '') return 0;
+    if (typeof val === 'number') return val;
+    
+    // Remove R$, espaços, pontos de milhar e troca vírgula por ponto
+    const cleaned = String(val)
+      .replace(/R\$/g, '')
+      .replace(/\s/g, '')
+      .replace(/\./g, '')
+      .replace(',', '.');
+    
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+  };
+
   const parseToDate = (dateVal: any): Date | null => {
     if (!dateVal || String(dateVal).trim() === '' || String(dateVal).toLowerCase() === 'null') return null;
     try {
@@ -67,7 +83,6 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
     const end = parseToDate(dataFim);
     if (!start || !end) return { items: [], summary: { bruto: 0, descontos: 0, liquido: 0, count: 0, discountCount: 0 } };
 
-    // Mapear e-mails duplicados para desconto de 10%
     const emailCounts: Record<string, number> = {};
     alunos.forEach(a => {
       const email = normalizeText(a.email);
@@ -89,7 +104,6 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
       const studentCourseName = normalizeText(m.turmaId.split('-')[0]);
       const studentUnit = normalizeText(m.unidade);
 
-      // Busca por vínculo ID ou por proximidade de nome na mesma unidade
       const turma = turmas.find(t => 
         t.id === m.turmaId || 
         (normalizeText(t.unidade) === studentUnit && (
@@ -101,9 +115,11 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
       
       if (!turma) return;
 
+      // Compatibilidade: Busca por valorMensal ou custo (nome comum na planilha)
+      const vBase = parseCurrency(turma.valorMensal || (turma as any).custo || (turma as any).valor || 0);
+      
       const emailAluno = normalizeText(aluno.email);
       const temDesconto = emailAluno && emailCounts[emailAluno] > 1;
-      const vBase = turma.valorMensal || 0;
       const vDesconto = temDesconto ? vBase * 0.10 : 0;
       const motivo = temDesconto ? "Fidelidade (E-mail Duplicado 10%)" : "--";
 
@@ -111,8 +127,10 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
       if (!dMat) return;
 
       let currPayDate = new Date(dMat);
-      // Iterar meses para projeção financeira
-      while (currPayDate <= end) {
+      // Trava de segurança para não gerar loops infinitos
+      let iterations = 0;
+      while (currPayDate <= end && iterations < 120) {
+        iterations++;
         const dCanc = parseToDate(aluno.dataCancelamento);
         if (dCanc && currPayDate > dCanc) break;
 
@@ -145,7 +163,6 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
           if (temDesconto) countDescontos++;
         }
         currPayDate.setMonth(currPayDate.getMonth() + 1);
-        if (currPayDate.getFullYear() > end.getFullYear() + 2) break; // Trava de segurança
       }
     });
 
@@ -281,7 +298,7 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
                    <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase"><span>Mensalidades</span><span className="text-slate-700">{p.count}</span></div>
                 </div>
                 <div className="pt-6 border-t border-slate-50">
-                   <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1">Líquido Estimado</p>
+                   <p className="text-9px font-black text-blue-500 uppercase tracking-widest mb-1">Líquido Estimado</p>
                    <p className="text-3xl font-black text-blue-600">{p.liquido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                 </div>
               </div>
@@ -343,7 +360,7 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
                            <td className="px-8 py-5 text-xs font-bold text-slate-500 uppercase">{row.professor}</td>
                            <td className="px-8 py-5 text-right font-bold">{row.vBruto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                            <td className="px-8 py-5 text-right font-bold text-red-400">-{row.vDesconto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
-                           <td className="px-8 py-5"><span className="text-[9px] font-black px-2 py-1 bg-slate-50 rounded uppercase text-slate-400">{row.motivo}</span></td>
+                           <td className="px-8 py-5"><span className="text-9px font-black px-2 py-1 bg-slate-50 rounded uppercase text-slate-400">{row.motivo}</span></td>
                            <td className="px-8 py-5 text-right font-black text-blue-600 text-lg">{row.vLiquido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                         </tr>
                       )) : (

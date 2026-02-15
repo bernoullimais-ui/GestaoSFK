@@ -60,6 +60,7 @@ export interface Presenca {
   data: string;
   status: 'Presente' | 'Ausente';
   observacao?: string;
+  alarme?: string; // Coluna G: "Enviado" ou vazio
 }
 
 export interface Usuario {
