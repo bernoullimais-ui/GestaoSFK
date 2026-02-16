@@ -1,14 +1,22 @@
 
-import { Aluno, Turma, Matricula, Usuario } from './types';
+import { Aluno, Turma, Matricula, Presenca, Usuario } from './types';
 
-export const UNIDADES_SFK = ['AKA', 'BUNNY', 'PEQUENO LICEU', 'DOM PEDRINHO', 'OFICINA'];
+export const INITIAL_ALUNOS: Aluno[] = [
+  { id: 'joao_silva', nome: 'João Silva', dataNascimento: '2015-05-12', contato: '(11) 98888-7777' },
+];
 
-export const INITIAL_ALUNOS: Aluno[] = [];
-export const INITIAL_TURMAS: Turma[] = [];
-export const INITIAL_MATRICULAS: Matricula[] = [];
-export const INITIAL_PRESENCAS: any[] = [];
+export const INITIAL_TURMAS: Turma[] = [
+  { id: 'Judô Infantil', nome: 'Judô Infantil', horario: '09:00', professor: 'Prof. Ricardo' },
+];
+
+export const INITIAL_MATRICULAS: Matricula[] = [
+  { id: 'M1', alunoId: 'joao_silva', turmaId: 'Judô Infantil' },
+];
+
+export const INITIAL_PRESENCAS: Presenca[] = [];
 
 export const INITIAL_USUARIOS: Usuario[] = [
-  { login: 'SFK', senha: 'SFK', nivel: 'Start', nome: 'Configuração SFK', unidade: 'TODAS' },
-  { login: 'admin', senha: 'sfk', nivel: 'Gestor Master', unidade: 'TODAS' }
+  { login: 'B+', senha: 'B+', nivel: 'Start', nome: 'Configuração Inicial' },
+  { login: 'admin', senha: 'admin', nivel: 'Gestor Master' },
+  { login: 'professor', senha: '123', nivel: 'Professor' }
 ];

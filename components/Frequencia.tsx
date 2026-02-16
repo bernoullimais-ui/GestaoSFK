@@ -14,13 +14,7 @@ import {
   ChevronUp,
   History,
   AlertCircle,
-  RefreshCw,
-  MapPin,
-  GraduationCap,
-  ClipboardList,
-  UserCheck,
-  Check,
-  X
+  RefreshCw
 } from 'lucide-react';
 import { Turma, Aluno, Matricula, Presenca, Usuario } from '../types';
 
@@ -34,7 +28,6 @@ interface FrequenciaProps {
 }
 
 const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, presencas, onSave, currentUser }) => {
-  const [selectedUnidade, setSelectedUnidade] = useState('');
   const [selectedTurmaId, setSelectedTurmaId] = useState('');
   const [data, setData] = useState(new Date().toLocaleDateString('en-CA'));
   const [observacaoAula, setObservacaoAula] = useState('');
@@ -43,356 +36,299 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
   const [visibleNotes, setVisibleNotes] = useState<Record<string, boolean>>({});
   const [isSuccess, setIsSuccess] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [buscaAluno, setBuscaAluno] = useState('');
 
-  const normalize = (t: string) => 
-    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
-
-  // Segurança: isMaster deve ser baseado estritamente no Nível, não no campo de Unidade.
-  const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start';
-  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
-  const hasGlobalUnitAccess = normalize(currentUser.unidade) === 'todas';
-  
-  const professorName = normalize(currentUser.nome || currentUser.login);
-
-  const myPermittedTurmas = useMemo(() => {
-    // Gestor Master ou usuários com acesso global veem o array bruto
-    if (isMaster || hasGlobalUnitAccess) return turmas;
-    
-    let filtered = [...turmas];
-    const unidadestr = currentUser.unidade || '';
-    const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
-    
-    // Restringe turmas por unidade do usuário
-    if (userUnits.length > 0) {
-      filtered = filtered.filter(t => userUnits.some(u => normalize(t.unidade).includes(u) || u.includes(normalize(t.unidade))));
-    }
-    
-    // Se for professor, restringe também ao nome dele nas turmas
-    if (isProfessor) {
-      filtered = filtered.filter(t => {
-        const prof = normalize(t.professor).replace(/^prof\.?\s*/i, '');
-        return prof.includes(professorName) || professorName.includes(prof);
-      });
-    }
-    return filtered;
-  }, [turmas, isProfessor, isMaster, hasGlobalUnitAccess, professorName, currentUser.unidade]);
-
-  const unidadesDisponiveis = useMemo(() => {
-    const seen = new Set<string>();
-    const units: string[] = [];
-    myPermittedTurmas.forEach(t => {
-      const n = t.unidade?.trim();
-      if (!n) return;
-      const norm = normalize(n);
-      if (!seen.has(norm)) {
-        seen.add(norm);
-        units.push(n);
-      }
-    });
-    return units.sort((a, b) => a.localeCompare(b));
-  }, [myPermittedTurmas]);
+  const isProfessor = currentUser.nivel === 'Professor';
+  const professorName = currentUser.nome || currentUser.login;
 
   const displayTurmas = useMemo(() => {
-    if (!selectedUnidade) return [];
-    const unidadeBusca = normalize(selectedUnidade);
-    let filtered = myPermittedTurmas.filter(t => normalize(t.unidade) === unidadeBusca);
-    
-    const uniqueList: Turma[] = [];
-    const seenIds = new Set<string>();
-    filtered.forEach(t => {
-      if (!seenIds.has(t.id)) {
-        seenIds.add(t.id);
-        uniqueList.push(t);
-      }
-    });
-    return uniqueList;
-  }, [myPermittedTurmas, selectedUnidade]);
-
-  useEffect(() => {
-    if (selectedTurmaId) {
-      const turmaExisteNaUnidade = displayTurmas.some(t => t.id === selectedTurmaId);
-      if (!turmaExisteNaUnidade) setSelectedTurmaId('');
-    }
-  }, [displayTurmas, selectedTurmaId]);
+    if (!isProfessor) return turmas;
+    return turmas.filter(t => t.professor === professorName);
+  }, [turmas, isProfessor, professorName]);
 
   const alunosMatriculados = useMemo(() => {
     if (!selectedTurmaId) return [];
-    const targetTurma = turmas.find(t => t.id === selectedTurmaId);
-    if (!targetTurma) return [];
-    
-    const tId = normalize(selectedTurmaId);
-    const tNome = normalize(targetTurma.nome);
-    const tUnidade = normalize(targetTurma.unidade);
-    
-    const idsAlunosMatriculados = matriculas
-      .filter(m => {
-        const mTurmaId = normalize(m.turmaId);
-        const mUnidade = normalize(m.unidade);
-        return mUnidade === tUnidade && (mTurmaId === tId || mTurmaId.includes(tNome) || tNome.includes(mTurmaId));
-      })
+    const idsMatriculados = matriculas
+      .filter(m => m.turmaId === selectedTurmaId)
       .map(m => m.alunoId);
-      
-    const uniqueIds = Array.from(new Set(idsAlunosMatriculados));
-    return alunos.filter(a => 
-      uniqueIds.includes(a.id) && 
-      (normalize(a.statusMatricula || 'ativo') === 'ativo') &&
-      (!buscaAluno || normalize(a.nome).includes(normalize(buscaAluno)))
-    ).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [selectedTurmaId, matriculas, alunos, turmas, buscaAluno]);
+    return alunos.filter(a => idsMatriculados.includes(a.id));
+  }, [selectedTurmaId, matriculas, alunos]);
 
   useEffect(() => {
     if (selectedTurmaId && data) {
-      const chamadasExistentes = presencas.filter(p => normalize(p.turmaId) === normalize(selectedTurmaId) && p.data === data);
+      const chamadasExistentes = presencas.filter(p => p.turmaId === selectedTurmaId && p.data === data);
+      
       if (chamadasExistentes.length > 0) {
         setIsEditMode(true);
         const newMarked: Record<string, 'Presente' | 'Ausente'> = {};
         const newNotes: Record<string, string> = {};
         let aulaNote = '';
+
         chamadasExistentes.forEach(p => {
           newMarked[p.alunoId] = p.status;
+          
           if (p.observacao) {
             const matchAula = p.observacao.match(/\[Aula: (.*?)\]/);
             const matchAluno = p.observacao.match(/\[Aluno: (.*?)\]/);
+            
             if (matchAula) aulaNote = matchAula[1];
             if (matchAluno) newNotes[p.alunoId] = matchAluno[1];
-            else if (!matchAula && !matchAluno) aulaNote = p.observacao;
+            
+            if (!matchAula && !matchAluno && p.observacao) {
+               newNotes[p.alunoId] = p.observacao;
+            }
           }
         });
+
         setMarkedPresencas(newMarked);
         setStudentNotes(newNotes);
         setObservacaoAula(aulaNote);
       } else {
         setIsEditMode(false);
         const initial: Record<string, 'Presente' | 'Ausente'> = {};
-        alunosMatriculados.forEach(aluno => { initial[aluno.id] = 'Presente'; });
+        alunosMatriculados.forEach(aluno => {
+          initial[aluno.id] = 'Presente';
+        });
         setMarkedPresencas(initial);
         setStudentNotes({});
         setObservacaoAula('');
       }
     }
-  }, [selectedTurmaId, data, presencas, alunosMatriculados.length]);
+  }, [selectedTurmaId, data, presencas, alunosMatriculados]);
 
   const handleTogglePresenca = (alunoId: string, status: 'Presente' | 'Ausente') => {
     setMarkedPresencas(prev => ({ ...prev, [alunoId]: status }));
   };
 
+  const toggleNoteVisibility = (alunoId: string) => {
+    setVisibleNotes(prev => ({ ...prev, [alunoId]: !prev[alunoId] }));
+  };
+
+  const handleStudentNoteChange = (alunoId: string, note: string) => {
+    setStudentNotes(prev => ({ ...prev, [alunoId]: note }));
+  };
+
   const handleSave = () => {
-    if (!selectedTurmaId) return;
-    const selectedTurma = turmas.find(t => t.id === selectedTurmaId);
     const records: Presenca[] = Object.entries(markedPresencas).map(([alunoId, status]) => {
       const individualNote = studentNotes[alunoId]?.trim();
       const classNote = observacaoAula.trim();
+      
       let finalNote = "";
-      if (classNote && individualNote) finalNote = `[Aula: ${classNote}] | [Aluno: ${individualNote}]`;
-      else if (classNote) finalNote = `[Aula: ${classNote}]`;
-      else if (individualNote) finalNote = `[Aluno: ${individualNote}]`;
+      if (classNote && individualNote) {
+        finalNote = `[Aula: ${classNote}] | [Aluno: ${individualNote}]`;
+      } else if (classNote) {
+        finalNote = `[Aula: ${classNote}]`;
+      } else if (individualNote) {
+        finalNote = `[Aluno: ${individualNote}]`;
+      }
+
       return {
         id: Math.random().toString(36).substr(2, 9),
         alunoId,
         turmaId: selectedTurmaId,
-        unidade: selectedTurma?.unidade || currentUser.unidade,
         data,
         status: status as 'Presente' | 'Ausente',
         observacao: finalNote || undefined
       };
     });
+    
+    if (records.length === 0) return;
+
     onSave(records);
     setIsSuccess(true);
     setTimeout(() => setIsSuccess(false), 3000);
-    setBuscaAluno('');
+    
+    setMarkedPresencas({});
+    setSelectedTurmaId('');
+    setObservacaoAula('');
+    setStudentNotes({});
+    setVisibleNotes({});
+    setIsEditMode(false);
   };
 
+  const allMarked = selectedTurmaId && alunosMatriculados.length > 0 && 
+                    alunosMatriculados.every(a => markedPresencas[a.id]);
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-20 animate-in fade-in duration-500">
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
-          <div className="md:col-span-4">
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
-              <MapPin className="w-3.5 h-3.5 text-blue-500" /> 1. ESCOLHA A UNIDADE
-            </label>
-            <div className="relative group">
-              <select 
-                value={selectedUnidade}
-                onChange={(e) => { setSelectedUnidade(e.target.value); setSelectedTurmaId(''); }}
-                className="w-full pl-6 pr-10 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700 appearance-none cursor-pointer"
-              >
-                <option value="">Selecione...</option>
-                {unidadesDisponiveis.map(u => (<option key={u} value={u}>{u}</option>))}
-              </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
-            </div>
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-4">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Turma Selecionada</label>
+            <select 
+              value={selectedTurmaId}
+              onChange={(e) => setSelectedTurmaId(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700"
+            >
+              <option value="">Escolha uma turma...</option>
+              {displayTurmas.map(t => (
+                <option key={t.id} value={t.id}>{t.nome} - {t.horario} ({t.professor})</option>
+              ))}
+            </select>
           </div>
-          <div className="md:col-span-5">
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
-              <GraduationCap className="w-3.5 h-3.5 text-blue-500" /> 2. SELECIONE A TURMA
-            </label>
-            <div className="relative group">
-              <select 
-                value={selectedTurmaId}
-                disabled={!selectedUnidade}
-                onChange={(e) => setSelectedTurmaId(e.target.value)}
-                className={`w-full pl-6 pr-10 py-4 border-2 rounded-2xl outline-none transition-all font-bold appearance-none cursor-pointer ${
-                  !selectedUnidade ? 'bg-slate-50 border-slate-50 text-slate-300' : 'bg-slate-50 border-slate-100 text-slate-700 focus:border-blue-500'
-                }`}
-              >
-                <option value="">{selectedUnidade ? 'Clique para escolher...' : 'Aguardando unidade...'}</option>
-                {displayTurmas.map(t => (<option key={t.id} value={t.id}>{t.nome} ({t.horario})</option>))}
-              </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
+          <div className="md:w-1/3">
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Data da Chamada</label>
+            <div className="relative">
+              <CalendarIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+              <input 
+                type="date" 
+                value={data}
+                onChange={(e) => setData(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700"
+              />
             </div>
-          </div>
-          <div className="md:col-span-3">
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
-              <CalendarIcon className="w-3.5 h-3.5 text-blue-500" /> 3. DATA DA AULA
-            </label>
-            <input 
-              type="date" 
-              value={data}
-              onChange={(e) => setData(e.target.value)}
-              className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700"
-            />
           </div>
         </div>
+
         {selectedTurmaId && (
-          <div className="animate-in fade-in zoom-in-95 duration-500 pt-4 border-t border-slate-50">
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
-              <ClipboardList className="w-3.5 h-3.5 text-blue-500" /> RESUMO DO CONTEÚDO DA AULA
-            </label>
-            <textarea 
-              value={observacaoAula}
-              onChange={(e) => setObservacaoAula(e.target.value)}
-              placeholder="Descreva o que foi trabalhado hoje com a turma..."
-              className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] focus:border-blue-500 outline-none transition-all font-medium min-h-[100px] resize-none shadow-inner"
-            />
+          <div className="animate-in fade-in zoom-in-95 duration-300">
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Observações Gerais da Aula (Conteúdo)</label>
+            <div className="relative">
+              <MessageSquareQuote className="absolute left-4 top-4 w-5 h-5 text-slate-300" />
+              <textarea 
+                value={observacaoAula}
+                onChange={(e) => setObservacaoAula(e.target.value)}
+                placeholder="Ex: Treino de quedas, revision de fundamentos..."
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-medium min-h-[80px] resize-none"
+              />
+            </div>
           </div>
         )}
       </div>
-      {selectedTurmaId && (
-        <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
-          <div className="p-8 bg-[#0f172a] text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h3 className="font-black text-xl flex items-center gap-2 tracking-tight uppercase">
-                {isEditMode ? <RefreshCw className="w-5 h-5 text-blue-400" /> : <ClipboardList className="w-5 h-5 text-blue-400" />}
-                {isEditMode ? 'EDITAR FREQUÊNCIA' : 'REALIZAR CHAMADA'}
-              </h3>
-              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mt-1">
-                {isEditMode ? 'REGISTRO JÁ EXISTE NA PLANILHA' : 'LANÇAMENTO DE NOVO REGISTRO'}
-              </p>
-            </div>
-            <div className="flex flex-col md:flex-row items-center gap-4">
-               <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input 
-                    type="text" 
-                    value={buscaAluno}
-                    onChange={(e) => setBuscaAluno(e.target.value)}
-                    placeholder="Filtrar aluno..."
-                    className="pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-xl text-xs font-bold outline-none focus:bg-white/20 transition-all placeholder-slate-500 uppercase tracking-tighter"
-                  />
-               </div>
-               <div className="flex items-center gap-2 bg-blue-600 px-4 py-2 rounded-xl border border-blue-500 shadow-lg">
-                 <UserCheck className="w-4 h-4 text-white" />
-                 <span className="text-xs font-black uppercase tracking-tighter">{alunosMatriculados.length} Alunos na Lista</span>
-               </div>
-            </div>
+
+      {isEditMode && selectedTurmaId && (
+        <div className="bg-blue-600 p-4 rounded-2xl text-white flex items-center gap-3 animate-in slide-in-from-top-4 duration-300 shadow-lg shadow-blue-500/20">
+          <History className="w-6 h-6 shrink-0" />
+          <div>
+            <p className="font-black text-sm uppercase tracking-wider">Modo de Edição Ativo</p>
+            <p className="text-xs text-blue-100 font-medium">Já existe uma frequência salva para este dia. Suas alterações atualizarão o registro atual.</p>
           </div>
+        </div>
+      )}
+
+      {selectedTurmaId && alunosMatriculados.length > 0 ? (
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
+          <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-lg">{isEditMode ? 'Editar Chamada' : 'Nova Chamada'}</h3>
+              <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">{alunosMatriculados.length} Alunos na Lista</p>
+            </div>
+            {!isEditMode && (
+              <div className="text-[10px] font-black uppercase text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20">
+                Presença Padrão Ativa
+              </div>
+            )}
+          </div>
+          
           <div className="divide-y divide-slate-50">
-            {alunosMatriculados.length > 0 ? alunosMatriculados.map((aluno) => (
+            {alunosMatriculados.map((aluno) => (
               <div key={aluno.id} className="flex flex-col">
-                <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:bg-slate-50/50 transition-colors">
-                  <div className="flex items-center gap-5">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl transition-all duration-300 shadow-sm ${
-                      markedPresencas[aluno.id] === 'Presente' ? 'bg-blue-600 text-white' : 
-                      markedPresencas[aluno.id] === 'Ausente' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-400'
+                <div className="p-5 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg transition-all duration-300 ${
+                      markedPresencas[aluno.id] === 'Presente' ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 
+                      markedPresencas[aluno.id] === 'Ausente' ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' : 'bg-slate-100 text-slate-400'
                     }`}>
                       {aluno.nome.charAt(0)}
                     </div>
                     <div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-black text-slate-800 text-xl leading-tight uppercase tracking-tighter">{aluno.nome}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800 text-lg leading-tight">{aluno.nome}</span>
                         <button 
-                          onClick={() => setVisibleNotes(v => ({ ...v, [aluno.id]: !v[aluno.id] }))}
-                          className={`p-2.5 rounded-xl border-2 transition-all active:scale-95 ${
-                            studentNotes[aluno.id] ? 'bg-amber-100 border-amber-200 text-amber-600' : 'bg-white border-slate-100 text-slate-300 hover:text-blue-600 hover:border-blue-100'
+                          onClick={() => toggleNoteVisibility(aluno.id)}
+                          title="Adicionar Observação Individual"
+                          className={`p-1.5 rounded-lg transition-all ${
+                            studentNotes[aluno.id] 
+                            ? 'bg-amber-100 text-amber-600 border border-amber-200' 
+                            : 'text-slate-300 hover:text-blue-500 hover:bg-blue-50'
                           }`}
-                          title="Observação do Aluno"
                         >
-                          <MessageSquarePlus className="w-5 h-5" />
+                          {studentNotes[aluno.id] ? <MessageSquareText className="w-4 h-4" /> : <MessageSquarePlus className="w-4 h-4" />}
                         </button>
                       </div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase mt-1 tracking-widest leading-none">ESTUDANTE ATIVO</p>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                        markedPresencas[aluno.id] === 'Presente' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                      }`}>
+                        {markedPresencas[aluno.id] || 'Pendente'}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex gap-4">
+
+                  <div className="flex gap-2">
                     <button 
                       onClick={() => handleTogglePresenca(aluno.id, 'Presente')}
-                      className={`flex-1 sm:flex-none px-8 py-4 rounded-2xl border-2 font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm uppercase tracking-widest ${
-                        markedPresencas[aluno.id] === 'Presente' ? 'bg-blue-600 border-blue-600 text-white shadow-blue-600/20' : 'bg-white border-slate-100 text-slate-300'
+                      className={`p-3 rounded-2xl border-2 transition-all ${
+                        markedPresencas[aluno.id] === 'Presente' 
+                        ? 'bg-green-500 border-green-500 text-white shadow-md' 
+                        : 'border-slate-100 text-slate-300 hover:border-green-200'
                       }`}
                     >
-                      <CheckCircle2 className="w-5 h-5" /> PRESENTE
+                      <CheckCircle2 className="w-6 h-6" />
                     </button>
                     <button 
                       onClick={() => handleTogglePresenca(aluno.id, 'Ausente')}
-                      className={`flex-1 sm:flex-none px-8 py-4 rounded-2xl border-2 font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm uppercase tracking-widest ${
-                        markedPresencas[aluno.id] === 'Ausente' ? 'bg-red-500 border-red-500 text-white shadow-red-500/20' : 'bg-white border-slate-100 text-slate-300'
+                      className={`p-3 rounded-2xl border-2 transition-all ${
+                        markedPresencas[aluno.id] === 'Ausente' 
+                        ? 'bg-red-500 border-red-500 text-white shadow-md' 
+                        : 'border-slate-100 text-slate-300 hover:border-red-200'
                       }`}
                     >
-                      <XCircle className="w-5 h-5" /> AUSENTE
+                      <XCircle className="w-6 h-6" />
                     </button>
                   </div>
                 </div>
+
                 {(visibleNotes[aluno.id] || studentNotes[aluno.id]) && (
-                  <div className="px-6 pb-6 animate-in slide-in-from-top-2">
-                    <div className="bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl">
+                  <div className="px-5 pb-5 animate-in slide-in-from-top-2 duration-200">
+                    <div className="bg-amber-50/50 border border-amber-100 p-3 rounded-2xl flex items-start gap-3">
+                      <div className="p-1.5 bg-white rounded-lg shadow-sm">
+                        <MessageSquarePlus className="w-4 h-4 text-amber-500" />
+                      </div>
                       <textarea
                         value={studentNotes[aluno.id] || ''}
-                        onChange={(e) => setStudentNotes(n => ({ ...n, [aluno.id]: e.target.value }))}
-                        placeholder={`Observação específica para ${aluno.nome.split(' ')[0]} hoje...`}
-                        className="w-full bg-transparent outline-none text-sm font-medium text-amber-900 placeholder-amber-300 min-h-[60px] resize-none"
+                        onChange={(e) => handleStudentNoteChange(aluno.id, e.target.value)}
+                        placeholder={`Observação específica para ${aluno.nome.split(' ')[0]}...`}
+                        className="flex-1 bg-transparent outline-none text-sm font-medium text-amber-900 placeholder-amber-300 min-h-[60px] resize-none"
                       />
                     </div>
                   </div>
                 )}
               </div>
-            )) : (
-              <div className="py-24 text-center">
-                 <Search className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                 <h4 className="text-xl font-black text-slate-400 uppercase tracking-tighter">Nenhum aluno encontrado</h4>
-                 <p className="text-slate-300 text-xs font-bold uppercase mt-1 tracking-widest">Ajuste o filtro de busca ou verifique a matrícula.</p>
-              </div>
-            )}
+            ))}
           </div>
-          <div className="p-10 bg-slate-50 border-t border-slate-100 flex justify-center">
+          
+          <div className="p-8 bg-slate-50 border-t border-slate-100">
             <button 
+              disabled={!allMarked}
               onClick={handleSave}
-              className="w-full max-w-md py-6 rounded-3xl bg-[#0f172a] text-white font-black text-xl hover:bg-slate-800 shadow-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-4 group uppercase tracking-tight"
+              className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 font-black text-lg transition-all ${
+                allMarked 
+                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-500/20' 
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
             >
-              <Save className="w-7 h-7 text-blue-400 group-hover:scale-110 transition-transform" /> 
-              {isEditMode ? 'ATUALIZAR FREQÜÊNCIA' : 'SALVAR FREQÜÊNCIA'}
+              {isEditMode ? <RefreshCw className="w-6 h-6" /> : <Save className="w-6 h-6" />}
+              {isEditMode ? 'Atualizar Frequência B+' : 'Enviar Frequência B+'}
             </button>
           </div>
         </div>
-      )}
-      {isSuccess && (
-        <div className="fixed bottom-10 right-10 bg-blue-600 text-white px-10 py-6 rounded-3xl shadow-2xl flex items-center gap-5 animate-in slide-in-from-right-10 z-[100] border-2 border-blue-400">
-          <CheckCircle2 className="w-8 h-8" />
-          <div>
-            <p className="font-black text-lg leading-tight uppercase tracking-tight">Sincronizado!</p>
-            <p className="text-blue-100 text-xs font-bold uppercase tracking-widest mt-1 leading-none">Dados salvos com sucesso na planilha.</p>
+      ) : selectedTurmaId ? (
+        <div className="bg-white p-12 rounded-3xl shadow-sm border border-slate-100 text-center space-y-4">
+          <div className="inline-block p-4 bg-slate-50 rounded-2xl">
+            <AlertCircle className="w-10 h-10 text-slate-300" />
           </div>
+          <h3 className="text-xl font-black text-slate-800">Sem alunos nesta turma</h3>
+          <p className="text-slate-500 max-w-sm mx-auto font-medium">Cadastre matrículas na aba de Alunos para iniciar a frequência.</p>
+        </div>
+      ) : (
+        <div className="bg-blue-50 border-2 border-dashed border-blue-200 p-12 rounded-3xl text-center">
+          <p className="text-blue-600 font-bold text-lg">Selecione uma turma e data para carregar a lista de presença.</p>
         </div>
       )}
-      {!selectedTurmaId && (
-        <div className="bg-slate-50 border-4 border-dashed border-slate-200 p-24 rounded-[60px] text-center space-y-4">
-           <div className="w-20 h-20 bg-white rounded-3xl shadow-sm flex items-center justify-center mx-auto mb-6">
-              <GraduationCap className="w-10 h-10 text-blue-200" />
-           </div>
-           <p className="text-slate-400 font-black text-xl uppercase tracking-tight">AGUARDANDO SELEÇÃO</p>
-           <p className="text-slate-300 font-bold text-sm uppercase tracking-widest">
-             DEFINA A UNIDADE E A TURMA NOS FILTROS ACIMA PARA INICIAR.
-           </p>
+
+      {isSuccess && (
+        <div className="fixed bottom-8 right-8 bg-green-500 text-white px-8 py-5 rounded-3xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-right-10 z-50">
+          <CheckCircle2 className="w-7 h-7" />
+          <p className="font-black text-lg">{isEditMode ? 'Registro atualizado com sucesso!' : 'Chamada salva com sucesso!'}</p>
         </div>
       )}
     </div>

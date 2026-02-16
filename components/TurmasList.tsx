@@ -1,19 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { 
-  GraduationCap, 
-  Clock, 
-  User, 
-  ArrowRight, 
-  X, 
-  Search, 
-  AlertCircle, 
-  MapPin,
-  ChevronDown,
-  Users,
-  Activity,
-  CheckCircle2
-} from 'lucide-react';
+import { GraduationCap, Clock, User, ArrowRight, X, Users, Database, Search, Calendar, UserCheck } from 'lucide-react';
 import { Turma, Matricula, Aluno, Usuario } from '../types';
 
 interface TurmasListProps {
@@ -25,171 +12,197 @@ interface TurmasListProps {
 
 const TurmasList: React.FC<TurmasListProps> = ({ turmas, matriculas, alunos, currentUser }) => {
   const [selectedTurma, setSelectedTurma] = useState<Turma | null>(null);
-  const [selectedUnidade, setSelectedUnidade] = useState('');
-  const [searchCurso, setSearchCurso] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start';
-  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
-  
-  const normalize = (text: string) => 
-    String(text || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const isProfessor = currentUser.nivel === 'Professor';
+  const professorName = (currentUser.nome || currentUser.login).toLowerCase().trim();
 
-  const professorNameNormalized = normalize(currentUser.nome || currentUser.login);
-
-  const filteredTurmas = useMemo(() => {
-    let result = [...turmas];
-    
-    if (isMaster) {
-      // Gestor Master vê tudo
-    } else if (isProfessor) {
-      result = result.filter(t => {
-        const tProfNormalized = normalize(t.professor).replace(/^prof\.?\s*/i, '');
-        return tProfNormalized.includes(professorNameNormalized) || professorNameNormalized.includes(tProfNormalized);
+  const displayTurmas = useMemo(() => {
+    let filtered = turmas;
+    if (isProfessor) {
+      filtered = filtered.filter(t => {
+        const tProf = t.professor.toLowerCase().replace('prof.', '').trim();
+        return tProf.includes(professorName) || professorName.includes(tProf);
       });
-    } else if (currentUser.unidade !== 'TODAS') {
-      const userUnits = normalize(currentUser.unidade).split(',').map(u => u.trim()).filter(Boolean);
-      result = result.filter(t => userUnits.some(u => normalize(t.unidade).includes(u) || u.includes(normalize(t.unidade))));
     }
+    return filtered.filter(t => 
+      t.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.professor.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.horario.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [turmas, searchTerm, isProfessor, professorName]);
 
-    if (selectedUnidade) {
-       result = result.filter(t => normalize(t.unidade) === normalize(selectedUnidade));
-    }
+  const getAlunosDaTurma = (turmaId: string) => {
+    const idsMatriculados = matriculas.filter(m => m.turmaId === turmaId).map(m => m.alunoId);
+    return alunos
+      .filter(a => idsMatriculados.includes(a.id))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  };
+
+  const formatEscolaridade = (aluno: Aluno) => {
+    const etapa = (aluno.etapa || '').toUpperCase().trim();
+    let ano = (aluno.anoEscolar || '').trim();
+    const turmaLetra = (aluno.turmaEscolar || '').trim();
+    if (!etapa || !ano) return '--';
+    ano = ano.replace(/\s*ano\s*$/i, '').replace(/\s*série\s*$/i, '').replace(/\s*serie\s*$/i, '').trim();
+    return `${etapa}-${ano}${turmaLetra ? ' ' + turmaLetra : ''}`.trim();
+  };
+
+  const parseDate = (dateVal: any): Date => {
+    if (!dateVal || String(dateVal).trim() === '' || String(dateVal).toLowerCase() === 'null') return new Date(0);
     
-    if (searchCurso.trim()) {
-       const b = normalize(searchCurso);
-       result = result.filter(t => normalize(t.nome).includes(b) || normalize(t.professor).includes(b));
+    // Suporte a datas seriais do Excel/Sheets
+    if (typeof dateVal === 'number' || (!isNaN(Number(dateVal)) && String(dateVal).length < 8 && !String(dateVal).includes('/') && !String(dateVal).includes('-'))) {
+      const serial = Number(dateVal);
+      return new Date((serial - 25569) * 86400 * 1000);
     }
 
-    return result;
-  }, [turmas, isMaster, isProfessor, professorNameNormalized, currentUser.unidade, selectedUnidade, searchCurso]);
-
-  const unidadesDisponiveis = useMemo(() => {
-    const list = isMaster ? turmas : filteredTurmas;
-    const sets = new Set(list.map(t => t.unidade?.trim()).filter(Boolean));
-    return Array.from(sets).sort();
-  }, [turmas, filteredTurmas, isMaster]);
-
-  const getAlunosDaTurma = (turma: Turma) => {
-    const tId = normalize(turma.id);
-    const tNome = normalize(turma.nome);
-    const tUnidade = normalize(turma.unidade);
-    
-    const idsAlunosMatriculados = matriculas
-      .filter(m => {
-        const mTurmaId = normalize(m.turmaId);
-        const mUnidade = normalize(m.unidade);
-        return mUnidade === tUnidade && (mTurmaId === tId || mTurmaId.includes(tNome) || tNome.includes(mTurmaId));
-      })
-      .map(m => m.alunoId);
+    try {
+      let s = String(dateVal).trim().toLowerCase();
       
-    const uniqueIds = Array.from(new Set(idsAlunosMatriculados));
-    return alunos.filter(a => uniqueIds.includes(a.id) && normalize(a.statusMatricula || 'ativo') === 'ativo');
+      // Limpeza de ruídos
+      if (s.includes(',')) s = s.split(',')[0].trim();
+
+      // Formato ISO YYYY-MM-DD
+      const isoMatch = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if (isoMatch) {
+        return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]), 12, 0, 0);
+      }
+
+      // Formato DD/MM/YYYY ou DD/MM/YY
+      const dateMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+      if (dateMatch) {
+        const d = parseInt(dateMatch[1]);
+        const m = parseInt(dateMatch[2]);
+        let y = parseInt(dateMatch[3]);
+        if (y < 100) y += (y < 50 ? 2000 : 1900);
+        return new Date(y, m - 1, d, 12, 0, 0);
+      }
+
+      const monthsMap: Record<string, number> = {
+        'jan': 0, 'fev': 1, 'mar': 2, 'abr': 3, 'mai': 4, 'jun': 5,
+        'jul': 6, 'ago': 7, 'set': 8, 'out': 9, 'nov': 10, 'dez': 11
+      };
+
+      // Formato extenso: "01 de fev de 2026"
+      if (s.includes(' de ')) {
+        const parts = s.split(/\s+/);
+        const day = parseInt(parts[0]);
+        const monthPart = parts.find(p => monthsMap[p.replace('.', '').substring(0, 3)] !== undefined);
+        const yearPart = parts.find(p => /^\d{4}$/.test(p));
+
+        if (!isNaN(day) && monthPart && yearPart) {
+           const monthIndex = monthsMap[monthPart.replace('.', '').substring(0, 3)];
+           return new Date(parseInt(yearPart), monthIndex, day, 12, 0, 0);
+        }
+      }
+
+      const d = new Date(dateVal);
+      if (!isNaN(d.getTime())) {
+        d.setHours(12, 0, 0, 0);
+        return d;
+      }
+    } catch (e) {}
+    return new Date(0);
+  };
+
+  const formatDisplayDate = (dateVal: any) => {
+    const date = parseDate(dateVal);
+    if (date.getTime() === 0) return '--';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = String(date.getFullYear());
+    return `${day}/${month}/${year}`;
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="space-y-6 pb-20">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight">Turmas e Matrículas</h2>
-          <p className="text-slate-500 font-medium">Gestão de ocupação e listagem nominal por curso.</p>
+          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Turmas Ativas</h2>
+          <p className="text-slate-500 font-medium">Horários e listas sincronizados da planilha com controle de capacidade.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-2xl shadow-xl shadow-slate-900/10">
+          <Database className="w-4 h-4" />
+          <span className="text-[10px] font-black uppercase tracking-widest">FONTE: GOOGLE SHEETS</span>
         </div>
       </div>
 
-      <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-        <div>
-          <label className="block text-[10px] font-black text-slate-400 uppercase mb-3 ml-1 tracking-widest flex items-center gap-2">
-            <MapPin className="w-3.5 h-3.5 text-blue-500" /> FILTRAR UNIDADE
-          </label>
-          <div className="relative group">
-            <select 
-              value={selectedUnidade}
-              onChange={(e) => setSelectedUnidade(e.target.value)}
-              className="w-full pl-6 pr-10 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700 appearance-none cursor-pointer"
-            >
-              <option value="">Todas as Unidades</option>
-              {unidadesDisponiveis.map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
-            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
-          </div>
-        </div>
-        <div className="relative">
+      <div className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100">
+        <div className="relative w-full">
           <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
           <input 
             type="text" 
-            placeholder="Buscar por Curso ou Professor..." 
-            value={searchCurso}
-            onChange={(e) => setSearchCurso(e.target.value)}
-            className="w-full pl-14 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl outline-none font-bold focus:border-blue-500 transition-all"
+            placeholder="Consultar turma por nome, professor ou horário (Ex: Judô, 09:00)..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-14 pr-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-slate-700"
           />
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {filteredTurmas.map((turma) => {
-          const alunosNaTurma = getAlunosDaTurma(turma);
-          const matriculadosCount = alunosNaTurma.length;
-          const capacidade = Number(turma.capacidade) || 20;
-          const ocupacaoPct = Math.min(100, Math.round((matriculadosCount / capacidade) * 100));
+        {displayTurmas.map((turma) => {
+          const alunosTurma = getAlunosDaTurma(turma.id);
+          const matriculadosCount = alunosTurma.length;
+          const capacidade = turma.capacidade || 15;
+          const taxaOcupacao = Math.min(100, Math.round((matriculadosCount / capacidade) * 100));
+          const isLotada = taxaOcupacao >= 100;
           
           return (
-            <div key={turma.id} className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden flex flex-col group hover:shadow-xl transition-all duration-300">
-              <div className="p-10 space-y-6 flex-1">
-                <div className="flex justify-between items-start">
-                  <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                    <GraduationCap className="w-8 h-8" />
+            <div key={turma.id} className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden hover:shadow-xl transition-all border-l-[6px] border-l-blue-500 flex flex-col group">
+              <div className="p-8 flex-1">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="p-4 bg-blue-50 rounded-2xl">
+                    <GraduationCap className="w-8 h-8 text-blue-600" />
                   </div>
-                  <span className="bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-blue-100">
-                    {turma.unidade}
-                  </span>
-                </div>
-
-                <div>
-                  <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-tight">{turma.nome}</h3>
-                  <div className="flex items-center gap-2 text-slate-400 mt-2">
-                    <Clock className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase">{turma.horario}</span>
+                  <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isLotada ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                    {isLotada ? 'TURMA LOTADA' : 'VAGAS ABERTAS'}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-4 pt-4 border-t border-slate-50">
-                  <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center">
+                
+                <h3 className="text-2xl font-black text-slate-800 mb-6 truncate">{turma.nome}</h3>
+                
+                <div className="space-y-4 mb-8">
+                  <div className="flex items-center gap-3 text-slate-500">
+                    <Clock className="w-5 h-5 text-slate-400" />
+                    <span className="text-sm font-bold">{turma.horario}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-slate-500">
                     <User className="w-5 h-5 text-slate-400" />
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Professor(a)</p>
-                    <p className="text-sm font-black text-slate-700 uppercase">{turma.professor || '--'}</p>
+                    <span className="text-sm font-bold">{turma.professor}</span>
                   </div>
                 </div>
 
-                {/* Bloco de Taxa de Ocupação Solicitado */}
-                <div className="pt-6 space-y-3">
+                <div className="space-y-3">
                   <div className="flex justify-between items-end">
-                    <div className="flex items-center gap-2 text-blue-600">
-                      <Users className="w-4 h-4" />
-                      <span className="text-xs font-black uppercase tracking-tighter">{matriculadosCount} MATRICULADOS</span>
+                    <div className="flex items-center gap-2">
+                       <Users className="w-4 h-4 text-blue-600" />
+                       <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{matriculadosCount} MATRICULADOS</span>
                     </div>
                     <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{capacidade} VAGAS</span>
                   </div>
                   
-                  <div className="h-3 w-full bg-slate-50 rounded-full overflow-hidden">
+                  <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                     <div 
-                      className={`h-full transition-all duration-1000 ${ocupacaoPct >= 90 ? 'bg-amber-500' : 'bg-blue-600'}`}
-                      style={{ width: `${ocupacaoPct}%` }}
+                      className={`h-full rounded-full transition-all duration-1000 ${isLotada ? 'bg-red-500' : 'bg-blue-600'}`}
+                      style={{ width: `${taxaOcupacao}%` }}
                     />
                   </div>
 
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TAXA DE OCUPAÇÃO</span>
-                    <span className="text-sm font-black text-blue-600">{ocupacaoPct}%</span>
+                    <span className="text-[11px] font-black text-blue-600">{taxaOcupacao}%</span>
                   </div>
                 </div>
               </div>
 
               <button 
-                onClick={() => setSelectedTurma(turma)}
-                className="w-full bg-slate-50 hover:bg-indigo-600 hover:text-white p-6 font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all border-t border-slate-100"
+                onClick={() => setSelectedTurma(turma)} 
+                className="w-full py-5 bg-slate-50 border-t border-slate-100 text-slate-600 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-900 hover:text-white transition-all group"
               >
-                VER LISTA NOMINAL <ArrowRight className="w-4 h-4" />
+                Ver Lista de Alunos 
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </button>
             </div>
           );
@@ -197,56 +210,73 @@ const TurmasList: React.FC<TurmasListProps> = ({ turmas, matriculas, alunos, cur
       </div>
 
       {selectedTurma && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-4xl rounded-[40px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="bg-[#0f172a] p-10 text-white flex justify-between items-center">
+            <div className="p-8 bg-blue-600 text-white flex items-center justify-between">
               <div>
-                <h3 className="text-3xl font-black uppercase tracking-tighter leading-none">{selectedTurma.nome}</h3>
-                <div className="flex items-center gap-4 mt-3">
-                   <div className="flex items-center gap-2 text-slate-400">
-                      <MapPin className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">{selectedTurma.unidade}</span>
-                   </div>
-                   <div className="flex items-center gap-2 text-slate-400">
-                      <Clock className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">{selectedTurma.horario}</span>
-                   </div>
-                </div>
+                <h3 className="text-2xl font-black tracking-tight">Lista de Estudantes (A-Z)</h3>
+                <p className="text-blue-100 text-[10px] font-black uppercase tracking-widest mt-1">
+                  {selectedTurma.nome} • {selectedTurma.horario}
+                </p>
               </div>
-              <button onClick={() => setSelectedTurma(null)} className="p-3 bg-white/10 hover:bg-white/20 rounded-2xl transition-all">
+              <button 
+                onClick={() => setSelectedTurma(null)} 
+                className="p-3 bg-white/20 hover:bg-white/30 rounded-2xl transition-colors"
+              >
                 <X className="w-6 h-6" />
               </button>
             </div>
             
-            <div className="max-h-[60vh] overflow-y-auto p-10">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {getAlunosDaTurma(selectedTurma).length > 0 ? getAlunosDaTurma(selectedTurma).map((aluno, idx) => (
-                  <div key={idx} className="p-5 bg-slate-50 border border-slate-100 rounded-2xl flex items-center gap-4 group hover:border-indigo-200 transition-all">
-                    <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center font-black text-indigo-600 shadow-sm">{idx + 1}</div>
-                    <div>
-                      <p className="text-sm font-black text-slate-800 uppercase leading-none">{aluno.nome}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Estudante Ativo</p>
-                    </div>
-                  </div>
-                )) : (
-                  <div className="col-span-full py-20 text-center">
-                    <AlertCircle className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-400 font-black uppercase tracking-widest">Nenhuma matrícula ativa nesta turma.</p>
-                  </div>
-                )}
-              </div>
+            <div className="overflow-x-auto max-h-[60vh]">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                    <th className="px-8 py-5">Nome do Aluno</th>
+                    <th className="px-8 py-5">Escolaridade</th>
+                    <th className="px-8 py-5">Data de Nascimento</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {getAlunosDaTurma(selectedTurma.id).length > 0 ? (
+                    getAlunosDaTurma(selectedTurma.id).map(aluno => (
+                      <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-lg">
+                              {aluno.nome.charAt(0)}
+                            </div>
+                            <span className="font-bold text-slate-800">{aluno.nome}</span>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">
+                            {formatEscolaridade(aluno)}
+                          </span>
+                        </td>
+                        <td className="px-8 py-5 text-sm font-bold text-slate-500">
+                          {formatDisplayDate(aluno.dataNascimento)}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="px-8 py-20 text-center">
+                        <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                        <p className="text-slate-400 font-bold italic">Nenhum aluno matriculado nesta turma.</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
             
-            <div className="p-10 border-t border-slate-50 bg-slate-50/50 flex items-center justify-between">
-               <div className="flex items-center gap-4">
-                 <div className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase shadow-lg shadow-indigo-600/20">
-                   {getAlunosDaTurma(selectedTurma).length} Estudantes Ativos
-                 </div>
-                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    Vagas: {selectedTurma.capacidade || 20}
-                 </div>
-               </div>
-               <button onClick={() => setSelectedTurma(null)} className="font-black text-[11px] text-slate-400 uppercase hover:text-slate-600 transition-colors">Fechar Painel</button>
+            <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <button 
+                onClick={() => setSelectedTurma(null)} 
+                className="px-8 py-4 bg-white border-2 border-slate-200 rounded-2xl font-black text-xs uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
+              >
+                Fechar Lista
+              </button>
             </div>
           </div>
         </div>

@@ -22,23 +22,14 @@ import {
   UserCheck,
   ClipboardCheck,
   ArrowUpRight,
-  User,
-  Phone,
-  MapPin,
-  Search,
-  AlertCircle,
   Loader2,
-  CalendarCheck,
-  BookOpen,
-  LayoutGrid,
-  History,
-  RotateCcw
+  // Fix: Added missing User icon import
+  User
 } from 'lucide-react';
-import { AulaExperimental, Usuario, Turma, Aluno } from '../types';
+import { AulaExperimental, Usuario, Turma } from '../types';
 
 interface AulasExperimentaisProps {
   experimentais: AulaExperimental[];
-  alunosAtivos: Aluno[]; // Adicionado para permitir o cruzamento inteligente
   currentUser: Usuario;
   onUpdate: (updated: AulaExperimental) => void;
   turmas: Turma[];
@@ -46,106 +37,115 @@ interface AulasExperimentaisProps {
     url: string;
     token: string;
   };
-  msgTemplate?: string;
-  msgLembreteTemplate?: string;
+  templateLembrete?: string;
 }
 
 const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({ 
   experimentais, 
-  alunosAtivos,
   currentUser, 
   onUpdate,
   turmas,
   whatsappConfig,
-  msgTemplate = "Olá *{{responsavel}}*, aqui é da SFK. Como foi a aula experimental de *{{estudante}}* hoje?",
-  msgLembreteTemplate = "Olá *{{responsavel}}*, lembrete da aula de *{{estudante}}* hoje na SFK!"
+  templateLembrete
 }) => {
   const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('en-CA'));
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isSavingId, setIsSavingId] = useState<string | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const [localChanges, setLocalChanges] = useState<Record<string, { status?: string, feedback?: string }>>({});
-  const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string; isLembrete: boolean }>({ isOpen: false, exp: null, message: '', isLembrete: false });
-
-  const normalizeText = (t: string) => 
-    String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
-
-  const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start' || normalizeText(currentUser.unidade) === 'todas';
-  const isGestorOrCoordenador = currentUser.nivel === 'Gestor' || isMaster || currentUser.nivel === 'Coordenador';
-  const isRegente = currentUser.nivel === 'Regente';
-  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
+  const [isSendingId, setIsSendingId] = useState<string | null>(null);
   
-  const professorName = normalizeText(currentUser.nome || currentUser.login);
+  const [localChanges, setLocalChanges] = useState<Record<string, { status?: string, feedback?: string }>>({});
 
-  const professorAssignments = useMemo(() => {
-    if (!isProfessor) return [];
-    return turmas.filter(t => {
-      const prof = normalizeText(t.professor).replace(/^prof\.?\s*/i, '');
-      return prof.includes(professorName) || professorName.includes(prof);
-    }).map(t => ({
-      curso: normalizeText(t.nome),
-      unidade: normalizeText(t.unidade)
-    }));
-  }, [turmas, isProfessor, professorName]);
+  const isGestor = currentUser.nivel === 'Gestor' || currentUser.nivel === 'Gestor Master';
+  const isProfessor = currentUser.nivel === 'Professor';
+  const isRegente = currentUser.nivel === 'Regente';
+  const professorName = (currentUser.nome || currentUser.login).toLowerCase().trim();
 
-  const canEdit = isProfessor || isGestorOrCoordenador;
+  const formatSigla = (sigla: string) => {
+    if (!sigla) return 'PENDENTE';
+    let s = sigla.toUpperCase().trim();
+    s = s.replace(/ENSINO M[EÉ]DIO/gi, 'EM')
+         .replace(/ENSINO FUNDAMENTAL/gi, 'EF')
+         .replace(/EDUCA[CÇ]A[OÕ] INFANTIL/gi, 'EI');
+    s = s.replace(/\s*-\s*/g, '-').replace(/-+/g, '-');
+    s = s.replace(/^(EM|EF|EI)-(EM|EF|EI)-/i, '$1-');
+    s = s.replace(/\b(ANO|SÉRIE|SERIE|ESTÁGIO|ESTAGIO|TURMA)\b/gi, '').trim();
+    s = s.replace(/(\d+[ºª]?)-?\s*([A-E])$/i, '$1 $2');
+    s = s.replace(/^(EM|EF|EI)-\1-/i, '$1-').replace(/-+/g, '-').replace(/^-/, '').replace(/-$/, '').replace(/\s+/g, ' ').trim();
+    return s || 'PENDENTE';
+  };
 
-  const formatEscolaridade = (exp: any) => {
-    const estagio = (exp.sigla || exp.estagioanoescolar || exp.etapaescolar || exp.estagio || exp.etapa || '').toUpperCase().trim();
-    const turmaEscolar = (exp.turmaescolar || exp.turmaEscolar || '').toUpperCase().trim();
-    if (!estagio) return '';
-    return `${estagio}${turmaEscolar ? ' ' + turmaEscolar : ''}`.trim();
+  const normalizeCourseName = (name: string) => {
+    return name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") 
+      .replace(/\d+/g, '')             
+      .replace(/\s+/g, ' ')            
+      .trim();
   };
 
   const filteredExperimentais = useMemo(() => {
-    const unidadestr = currentUser.unidade || '';
-    const userUnits = normalizeText(unidadestr).split(',').map(u => u.trim()).filter(u => u !== "");
-    const regenteNameNorm = normalizeText(currentUser.nome || '');
+    const profCoursesNormalized = isProfessor 
+      ? turmas
+          .filter(t => {
+            const tProf = t.professor.toLowerCase().replace('prof.', '').trim();
+            return tProf.includes(professorName) || professorName.includes(tProf);
+          })
+          .map(t => normalizeCourseName(t.nome))
+      : [];
 
-    return experimentais.filter(exp => {
-      const expUnit = normalizeText(exp.unidade);
-      const expCurso = normalizeText(exp.curso);
-      const expEscolaridadeNorm = normalizeText(formatEscolaridade(exp));
+    const filtered = experimentais.filter(exp => {
+      if (isRegente) {
+        const userSiglaFormatted = formatSigla(currentUser.nome || '').toUpperCase();
+        const studentSiglaFormatted = formatSigla(exp.sigla || '').toUpperCase();
+        if (studentSiglaFormatted !== userSiglaFormatted) return false;
+      }
 
-      if (!isMaster) {
-        if (isRegente) {
-          if (expEscolaridadeNorm !== regenteNameNorm && !expEscolaridadeNorm.includes(regenteNameNorm) && !regenteNameNorm.includes(expEscolaridadeNorm)) {
-            return false;
-          }
-          if (userUnits.length > 0 && !userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) {
-            return false;
-          }
-        } 
-        else if (isProfessor) {
-          const isMyClass = professorAssignments.some(assign => 
-            (expCurso.includes(assign.curso) || assign.curso.includes(expCurso)) && 
-            (expUnit === assign.unidade || expUnit.includes(assign.unidade) || assign.unidade.includes(expUnit))
-          );
-          if (!isMyClass) return false;
-        } 
-        else if (unidadestr !== 'TODAS' && userUnits.length > 0) {
-          if (!userUnits.some(u => expUnit.includes(u) || u.includes(expUnit))) return false;
-        }
+      if (isProfessor) {
+        const expCourseNorm = normalizeCourseName(exp.curso || '');
+        const teachesThisCategory = profCoursesNormalized.some(pCourse => 
+          pCourse.includes(expCourseNorm) || expCourseNorm.includes(pCourse)
+        );
+        if (!teachesThisCategory) return false;
       }
 
       if (!selectedDate) return true;
-      const expDate = String(exp.aula || '').split(' ')[0];
-      return expDate === selectedDate;
-    }).sort((a, b) => a.estudante.localeCompare(b.estudante));
-  }, [experimentais, selectedDate, currentUser, isProfessor, isRegente, isGestorOrCoordenador, isMaster, professorAssignments]);
+      return exp.aula === selectedDate;
+    });
 
-  const handleTogglePresenca = (id: string, newStatus: string) => {
-    if (!canEdit) return;
-    setLocalChanges(prev => ({ ...prev, [id]: { ...prev[id], status: newStatus } }));
+    return [...filtered].sort((a, b) => {
+      const getPriority = (sigla: string) => {
+        const s = formatSigla(sigla).toUpperCase();
+        if (s.startsWith('EI')) return 1;
+        if (s.startsWith('EF')) return 2;
+        if (s.startsWith('EM')) return 3;
+        return 4;
+      };
+      const priorityA = getPriority(a.sigla);
+      const priorityB = getPriority(b.sigla);
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      const siglaA = formatSigla(a.sigla);
+      const siglaB = formatSigla(b.sigla);
+      if (siglaA !== siglaB) return siglaA.localeCompare(siglaB);
+      return a.estudante.localeCompare(b.estudante);
+    });
+  }, [experimentais, selectedDate, currentUser, isRegente, isProfessor, turmas, professorName]);
+
+  const handleLocalStatusUpdate = (id: string, newStatus: string) => {
+    setLocalChanges(prev => ({
+      ...prev,
+      [id]: { ...prev[id], status: newStatus }
+    }));
   };
 
   const handleLocalFeedbackUpdate = (id: string, feedback: string) => {
-    if (!canEdit) return;
-    setLocalChanges(prev => ({ ...prev, [id]: { ...prev[id], feedback: feedback } }));
+    setLocalChanges(prev => ({
+      ...prev,
+      [id]: { ...prev[id], feedback: feedback }
+    }));
   };
 
   const handleSaveChanges = async (exp: AulaExperimental) => {
-    if (!canEdit) return;
     const changes = localChanges[exp.id];
     if (!changes) return;
     setIsSavingId(exp.id);
@@ -169,94 +169,74 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     }
   };
 
-  const openComposeModal = (exp: AulaExperimental, isLembrete: boolean = false) => {
-    const responsavelFull = exp.responsavel1 || exp.estudante || '';
-    const primeiroNomeResponsavel = (responsavelFull || '').trim().split(' ')[0] || '';
-    const estudantePrimeiroNome = (exp.estudante || '').trim().split(' ')[0] || '';
-    const unidade = exp.unidade || '';
-    const curso = exp.curso || (exp as any).modalidade || '';
-    
-    let dataAulaFormatada = "";
-    if (exp.aula) {
-      const parts = String(exp.aula).split(' ')[0].split('-');
-      if (parts.length === 3) {
-        dataAulaFormatada = `${parts[2]}/${parts[1]}/${parts[0]}`;
-      } else {
-        dataAulaFormatada = exp.aula;
-      }
+  const handleSendReminder = async (exp: AulaExperimental) => {
+    if (!whatsappConfig?.url) return;
+    const fone = (exp.whatsapp1 || '').replace(/\D/g, '');
+    if (!fone) {
+      alert("Telefone do responsável não disponível.");
+      return;
     }
 
-    const template = isLembrete ? msgLembreteTemplate : msgTemplate;
-    let msg = template || '';
-    
-    const replacements = [
-      { tags: [/{{responsavel}}/gi, /{{RESPONSAVEL}}/gi], value: primeiroNomeResponsavel },
-      { tags: [/{{estudante}}/gi, /{{ALUNO}}/gi, /{{aluno}}/gi], value: estudantePrimeiroNome },
-      { tags: [/{{unidade}}/gi, /{{UNIDADE}}/gi], value: unidade },
-      { tags: [/{{curso}}/gi, /{{CURSO}}/gi], value: curso },
-      { tags: [/{{data}}/gi, /{{DATA}}/gi], value: dataAulaFormatada }
-    ];
-
-    replacements.forEach(rep => {
-      rep.tags.forEach(tag => {
-        msg = msg.replace(tag, rep.value);
-      });
-    });
-
-    setMessageModal({ isOpen: true, exp, message: msg, isLembrete });
-  };
-
-  const handleSendMessage = async () => {
-    if (!messageModal.exp) return;
-    setIsSending(true);
-    const fone = (messageModal.exp.whatsapp1 || '').replace(/\D/g, '');
+    setIsSendingId(exp.id);
     try {
-      if (whatsappConfig?.url && fone) {
-        await fetch(whatsappConfig.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': whatsappConfig.token || '' },
-          body: JSON.stringify({ "data.contact.Phone[0]": `55${fone}`, "message": messageModal.message })
-        });
-      } else if (fone) {
-        window.open(`https://wa.me/55${fone}?text=${encodeURIComponent(messageModal.message)}`, '_blank');
-      }
+      let msg = templateLembrete || "Olá *{{RESPONSAVEL}}*, aqui é da coordenação do *B+!*. Passando para confirmar a aula experimental de *{{CURSO}}* para o dia *{{DATA}}*. Estaremos esperando para acolher *{{ALUNO}}* com muito carinho!";
       
-      const studentKey = `${normalizeText(messageModal.exp.estudante)}-${normalizeStr(messageModal.exp.unidade)}`;
-      const isActuallyInBase = alunosAtivos.some(a => `${normalizeText(a.nome)}-${normalizeStr(a.unidade)}` === studentKey);
+      msg = msg
+        .replace(/{{RESPONSAVEL}}/g, exp.responsavel1?.split(' ')[0] || 'Família')
+        .replace(/{{ALUNO}}/g, exp.estudante)
+        .replace(/{{CURSO}}/g, exp.curso)
+        .replace(/{{DATA}}/g, exp.aula ? new Date(exp.aula + 'T12:00:00').toLocaleDateString('pt-BR') : '--');
 
-      if (messageModal.isLembrete) {
-        const updatedExp: AulaExperimental = { 
-          ...messageModal.exp, 
-          lembreteEnviado: true,
-          followUpSent: false,
-          // Se já estiver na base, não desmarca a conversão para FALSE
-          convertido: isActuallyInBase ? true : false
-        };
-        await onUpdate(updatedExp);
-      } else {
-        const updatedExp: AulaExperimental = { 
-          ...messageModal.exp, 
-          followUpSent: true 
-        };
-        await onUpdate(updatedExp);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (whatsappConfig.token) {
+        headers['Authorization'] = `Bearer ${whatsappConfig.token}`;
+        headers['apikey'] = whatsappConfig.token;
       }
-      setMessageModal({ ...messageModal, isOpen: false });
-    } catch (e) { alert("Erro ao enviar."); } finally { setIsSending(false); }
+
+      await fetch(whatsappConfig.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          "phone": `55${fone}`,
+          "message": msg,
+          "data.contact.Phone[0]": `55${fone}`
+        })
+      });
+      
+      await onUpdate({ ...exp, confirmationSent: true });
+      
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao processar lembrete.");
+    } finally {
+      setIsSendingId(null);
+    }
   };
 
-  const normalizeStr = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
+  const formatHeaderDate = (isoStr: string) => {
+    if (!isoStr) return "";
+    const [y, m, d] = isoStr.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('pt-BR');
+  };
 
   return (
     <div className="space-y-6 pb-20">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Funil Experimental</h2>
-          <p className="text-slate-500 italic font-medium">Mapeamento nominal para aulas experimentais agendadas.</p>
+          <h2 className="text-2xl font-bold text-slate-800">Funil Experimental</h2>
+          <p className="text-slate-500 italic">Mapeamento nominal para aulas experimentais.</p>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl shadow-lg shadow-slate-900/10">
+            <FlaskConical className="w-4 h-4 text-purple-400" />
+            <span className="text-[10px] font-black uppercase tracking-widest">Controle de Leads</span>
+          </div>
         </div>
       </div>
-      <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
         <div className="max-w-xs w-full">
-          <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Data da Aula Experimental</label>
+          <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider ml-1">Filtro por Data (AULA)</label>
           <div className="relative">
             <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
             <input 
@@ -268,189 +248,208 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
           </div>
         </div>
         <div className="flex gap-4">
-           <div className={`px-5 py-3 rounded-2xl border flex-1 transition-all ${filteredExperimentais.length > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-slate-50 border-slate-100'}`}>
-             <p className={`text-[9px] font-black uppercase ${filteredExperimentais.length > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>Filtro Ativo</p>
-             <p className="text-sm font-black text-indigo-950 uppercase">{filteredExperimentais.length} Agendamentos Localizados</p>
+           <div className="bg-purple-50 px-4 py-3 rounded-2xl border border-purple-100 flex-1">
+             <p className="text-[9px] font-black text-purple-600 uppercase">Total do Dia</p>
+             <p className="text-sm font-bold text-slate-700">{filteredExperimentais.length} Agendamentos</p>
            </div>
         </div>
       </div>
-      <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden min-h-[400px]">
-        <div className="p-6 bg-[#0f172a] text-white flex items-center justify-between">
+
+      <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden">
+        <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-white/10 rounded-xl">
-              <FlaskConical className="w-5 h-5 text-indigo-400" />
-            </div>
+            <Bell className="w-5 h-5 text-purple-400 animate-pulse" />
             <div>
-              <h3 className="font-black text-lg">{filteredExperimentais.length > 0 ? `Lista para ${new Date(selectedDate).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}` : 'Aguardando Agendamentos'}</h3>
+              <h3 className="font-bold text-lg">Leads para {formatHeaderDate(selectedDate)}</h3>
               <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest leading-none mt-1">
-                 AGENDAMENTOS DE LEADS
+                 MAPEAMENTO NOMINAL POR PROFESSOR
               </p>
             </div>
           </div>
+          <div className="bg-purple-600 px-3 py-1.5 rounded-xl text-xs font-black shadow-lg shadow-purple-600/20">
+            {filteredExperimentais.length} Leads
+          </div>
         </div>
+
         <div className="divide-y divide-slate-50">
           {filteredExperimentais.length > 0 ? filteredExperimentais.map((exp) => {
             const hasLocalChanges = !!localChanges[exp.id];
             const currentStatus = localChanges[exp.id]?.status || exp.status;
             const currentFeedback = localChanges[exp.id]?.feedback !== undefined ? localChanges[exp.id]?.feedback : (exp.observacaoProfessor || '');
-            const lembreteOk = exp.lembreteEnviado;
-            const escolaridade = formatEscolaridade(exp);
-            const modalidade = exp.curso || (exp as any).modalidade || '';
-
-            // Smart Sync Check
-            const studentKey = `${normalizeText(exp.estudante)}-${normalizeStr(exp.unidade)}`;
-            const isActuallyInBase = alunosAtivos.some(a => `${normalizeText(a.nome)}-${normalizeStr(a.unidade)}` === studentKey);
-            const needsSheetUpdate = isActuallyInBase && !exp.convertido;
+            const isConverted = exp.convertido;
+            const isSent = exp.confirmationSent;
 
             return (
               <div key={exp.id} className={`group transition-all ${expandedId === exp.id ? 'bg-slate-50/50' : 'hover:bg-slate-50/30'}`}>
                 <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                  <div className="flex items-center gap-5 flex-1">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl shadow-sm ${currentStatus === 'Presente' ? 'bg-emerald-600 text-white' : currentStatus === 'Ausente' ? 'bg-red-500 text-white' : currentStatus === 'Reagendada' ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className={`relative w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl shadow-sm transition-transform group-hover:scale-105 ${currentStatus === 'Presente' ? 'bg-green-600 text-white' : currentStatus === 'Ausente' ? 'bg-red-500 text-white' : 'bg-purple-500 text-white'}`}>
                       {exp.estudante.charAt(0)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="text-lg font-black text-slate-900 leading-tight truncate pr-4 uppercase" title={exp.estudante}>{exp.estudante}</h4>
-                        {exp.convertido && (
-                          <button 
-                            onClick={() => needsSheetUpdate && onUpdate({ ...exp, convertido: true })}
-                            className={`px-1.5 py-0.5 rounded border text-[8px] font-black shrink-0 uppercase transition-all ${needsSheetUpdate ? 'bg-amber-100 text-amber-700 border-amber-300 animate-pulse' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}
-                            title={needsSheetUpdate ? "Clique para gravar TRUE na planilha" : "Matrícula confirmada"}
-                          >
-                            {needsSheetUpdate ? 'Confirmar na Planilha' : 'MATRICULADO'}
-                          </button>
-                        )}
-                        {currentStatus === 'Reagendada' && (
-                          <span className="px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 text-[8px] font-black uppercase flex items-center gap-1 shrink-0">
-                            <RotateCcw className="w-2 h-2" /> Reagendada
-                          </span>
-                        )}
-                        {exp.reagendarEnviado && (
-                          <span className="px-2 py-1 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-600 text-[9px] font-black uppercase flex items-center gap-1.5 shrink-0 shadow-sm">
-                            <Send className="w-2.5 h-2.5" /> REAGENDAMENTO ENVIADO
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 mt-2">
-                        {/* UNIDADE */}
-                        <div className="flex items-center gap-1.5 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100 shadow-sm">
-                           <MapPin className="w-3.5 h-3.5 text-blue-500" />
-                           <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{exp.unidade}</span>
+                      {isConverted && (
+                        <div className="absolute -top-1 -right-1 bg-white text-blue-600 rounded-full p-1 shadow-md border border-blue-100">
+                          <UserCheck className="w-3 h-3" />
                         </div>
-                        
-                        {/* ESCOLARIDADE */}
-                        {escolaridade && (
-                          <div className="flex items-center gap-1.5 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-100 shadow-sm">
-                             <BookOpen className="w-3.5 h-3.5 text-purple-600" />
-                             <span className="text-[10px] font-black text-purple-700 uppercase tracking-widest leading-none">{escolaridade}</span>
-                          </div>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-lg font-bold text-slate-900 leading-tight">{exp.estudante}</h4>
+                        {isConverted && (
+                          <span className="bg-emerald-100 text-emerald-700 text-[8px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 border border-emerald-200 uppercase tracking-tighter">
+                            <ClipboardCheck className="w-2.5 h-2.5" /> Matriculado
+                          </span>
                         )}
+                        {hasLocalChanges && <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="Alterações não salvas" />}
+                      </div>
+                      
+                      {/* Adicionado exibição do responsável na lista principal */}
+                      <div className="flex items-center gap-1 text-slate-500 text-[11px] font-bold mt-1">
+                        <User className="w-3.5 h-3.5" />
+                        <span>Responsável: {exp.responsavel1 || 'Não informado'}</span>
+                      </div>
 
-                        {/* MODALIDADE */}
-                        <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 shadow-sm">
-                           <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-                           <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest leading-none">{modalidade || '--'}</span>
+                      <div className="flex flex-wrap items-center gap-3 mt-2">
+                        <span className="text-[11px] font-black text-blue-700 uppercase bg-blue-100/60 px-3 py-1.5 rounded-xl border border-blue-200/50 shadow-sm leading-none flex items-center justify-center">
+                          {formatSigla(exp.sigla)}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400">
+                          < GraduationCap className="w-4 h-4 text-slate-300" />
+                          <span className="truncate max-w-[150px] font-bold">{exp.curso}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase border-l border-slate-200 pl-3">
+                          <Clock className="w-3.5 h-3.5" /> Agendado: {formatHeaderDate(exp.aula)}
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <button 
-                      onClick={() => openComposeModal(exp, true)}
-                      disabled={lembreteOk}
-                      className={`px-6 py-3 rounded-2xl transition-all shadow-sm flex items-center gap-2 border ${lembreteOk ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-amber-50 text-amber-600 hover:bg-amber-100 border-amber-200'}`}
-                    >
-                      <Bell className={`w-4 h-4 ${lembreteOk ? '' : 'animate-pulse'}`} />
-                      <span className="text-[10px] font-black uppercase">{lembreteOk ? 'ENVIADO' : 'LEMBRETE'}</span>
-                    </button>
-                    <div className="flex flex-col items-center">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">PRESENÇA</span>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleTogglePresenca(exp.id, 'Presente')} 
-                          disabled={!canEdit}
-                          className={`p-2.5 rounded-xl border-2 transition-all ${currentStatus === 'Presente' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
-                        >
-                          <CheckCircle2 className="w-5 h-5" />
-                        </button>
-                        <button 
-                          onClick={() => handleTogglePresenca(exp.id, 'Ausente')} 
-                          disabled={!canEdit}
-                          className={`p-2.5 rounded-xl border-2 transition-all ${currentStatus === 'Ausente' ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-100 text-slate-300'}`}
-                        >
-                          <XCircle className="w-5 h-5" />
-                        </button>
+
+                  <div className="grid grid-cols-2 lg:flex lg:items-center gap-4">
+                    {isGestor && exp.status === 'Pendente' && (
+                       <button 
+                        onClick={() => handleSendReminder(exp)}
+                        disabled={isSendingId === exp.id || isSent}
+                        className={`p-2.5 rounded-xl border transition-all shadow-sm flex items-center justify-center ${
+                          isSent 
+                          ? 'bg-emerald-600 text-white border-emerald-600 cursor-not-allowed shadow-md' 
+                          : 'bg-green-50 text-green-600 border-green-100 hover:bg-green-600 hover:text-white'
+                        }`}
+                        title={isSent ? "Lembrete já enviado (SIM na planilha)" : "Enviar Lembrete WhatsApp"}
+                       >
+                         {isSendingId === exp.id ? (
+                           <Loader2 className="w-5 h-5 animate-spin" />
+                         ) : isSent ? (
+                           <div className="flex items-center gap-1">
+                             <Check className="w-5 h-5" />
+                             <span className="text-[9px] font-black">OK</span>
+                           </div>
+                         ) : (
+                           <MessageCircle className="w-5 h-5" />
+                         )}
+                       </button>
+                    )}
+
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">STATUS</span>
+                      <div className="flex gap-2 mt-1">
+                        {(isGestor || isProfessor) ? (
+                          <>
+                            <button 
+                              onClick={() => handleLocalStatusUpdate(exp.id, 'Presente')} 
+                              className={`p-2 rounded-xl border-2 transition-all ${currentStatus === 'Presente' ? 'bg-green-600 border-green-600 text-white shadow-md' : 'bg-white border-slate-100 text-slate-300 hover:border-green-200 hover:text-green-600'}`}
+                            >
+                              <CheckCircle2 className="w-5 h-5" />
+                            </button>
+                            <button 
+                              onClick={() => handleLocalStatusUpdate(exp.id, 'Ausente')} 
+                              className={`p-2 rounded-xl border-2 transition-all ${currentStatus === 'Ausente' ? 'bg-red-500 border-red-500 text-white shadow-md' : 'bg-white border-slate-100 text-slate-300 hover:border-red-200 hover:text-red-500'}`}
+                            >
+                              <XCircle className="w-5 h-5" />
+                            </button>
+                          </>
+                        ) : (
+                          <span className={`text-[10px] font-black uppercase px-2 py-1 rounded border ${currentStatus === 'Presente' ? 'bg-green-100 text-green-600' : currentStatus === 'Ausente' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-100 text-slate-400'}`}>
+                            {currentStatus}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <button 
-                      onClick={() => setExpandedId(expandedId === exp.id ? null : exp.id)}
-                      className="px-6 py-3 bg-[#0f172a] text-white rounded-2xl font-black text-[10px] flex items-center gap-2 hover:bg-slate-800 transition-all uppercase tracking-widest shadow-lg"
-                    >
-                      {expandedId === exp.id ? 'Fechar' : 'Detalhes'} {expandedId === exp.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    </button>
+
+                    <div className="col-span-2 lg:col-span-1 flex items-center gap-2">
+                      <button 
+                        onClick={() => setExpandedId(expandedId === exp.id ? null : exp.id)}
+                        className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase transition-all shadow-sm ${expandedId === exp.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                      >
+                        {expandedId === exp.id ? 'Fechar' : 'Detalhes'} {expandedId === exp.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
+
                 {expandedId === exp.id && (
-                  <div className="px-6 pb-8 pt-2 animate-in slide-in-from-top-4 flex flex-col md:flex-row gap-8">
+                  <div className="px-6 pb-6 pt-2 animate-in slide-in-from-top-4 duration-300 flex flex-col md:flex-row gap-6">
                     <div className="flex-1 space-y-4">
-                      <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm">
-                         <div className="flex items-center justify-between mb-4">
-                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                             <ClipboardCheck className="w-3.5 h-3.5 text-indigo-500"/> Observação da Aula Experimental
-                           </p>
-                           {needsSheetUpdate && (
-                             <button 
-                               onClick={() => onUpdate({ ...exp, convertido: true })}
-                               className="bg-amber-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 animate-bounce shadow-lg shadow-amber-200"
-                             >
-                               <History className="w-3.5 h-3.5" /> Gravar TRUE na Planilha
-                             </button>
-                           )}
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+                         <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Feedback Técnico (Professor)</p>
+                            {hasLocalChanges && <span className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> Alterações pendentes</span>}
                          </div>
                          <textarea 
                             value={currentFeedback}
                             onChange={(e) => handleLocalFeedbackUpdate(exp.id, e.target.value)}
-                            readOnly={!canEdit}
-                            placeholder={canEdit ? "Descreva o desempenho do lead..." : "Feedback não disponível para edição."}
-                            className={`w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-sm font-medium outline-none focus:border-indigo-500 min-h-[120px] resize-none shadow-inner ${!canEdit ? 'cursor-default' : ''}`}
+                            disabled={!isProfessor && !isGestor}
+                            placeholder="Descreva o desempenho motor e interesse do aluno para facilitar a matrícula..."
+                            className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-medium outline-none focus:border-purple-500 min-h-[120px] resize-none"
                          />
-                         {hasLocalChanges && canEdit && (
-                           <button 
-                            onClick={() => handleSaveChanges(exp)}
-                            disabled={isSavingId === exp.id}
-                            className="w-full mt-4 bg-indigo-950 text-white py-5 rounded-2xl font-black text-xs flex items-center justify-center gap-3 hover:bg-indigo-900 shadow-xl transition-all"
-                           >
-                            {isSavingId === exp.id ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                            SALVAR FEEDBACK E STATUS
-                           </button>
+                         
+                         {(isProfessor || isGestor) && (
+                            <button 
+                              onClick={() => handleSaveChanges(exp)}
+                              disabled={!hasLocalChanges || isSavingId === exp.id}
+                              className={`w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-3 transition-all ${
+                                !hasLocalChanges 
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                : 'bg-slate-900 text-white hover:bg-slate-800 shadow-xl shadow-slate-900/10 active:scale-[0.98]'
+                              }`}
+                            >
+                              {isSavingId === exp.id ? (
+                                <RefreshCw className="w-5 h-5 animate-spin" />
+                              ) : (
+                                <Save className="w-5 h-5" />
+                              )}
+                              {isSavingId === exp.id ? 'Sincronizando...' : 'Salvar Alterações'}
+                            </button>
                          )}
                       </div>
                     </div>
-                    <div className="w-full md:w-80 space-y-5">
-                       <div className="bg-slate-100 p-6 rounded-[32px] border border-slate-200 shadow-sm">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Informações de Contato</p>
-                          <div className="space-y-6">
-                             <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center"><User className="w-5 h-5 text-slate-400" /></div>
-                                <div>
-                                   <p className="text-[9px] font-black text-slate-400 uppercase">Responsável</p>
-                                   <p className="text-sm font-black text-slate-800 uppercase leading-none mt-1">{exp.responsavel1 || '--'}</p>
-                                </div>
-                             </div>
-                             <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center"><Phone className="w-5 h-5 text-slate-400" /></div>
-                                <div>
-                                   <p className="text-[9px] font-black text-slate-400 uppercase">WhatsApp</p>
-                                   <p className="text-sm font-black text-slate-800 leading-none mt-1">{exp.whatsapp1 || '--'}</p>
-                                </div>
-                             </div>
-                             {lembreteOk && (
-                               <div className="flex items-center gap-3 text-[10px] font-black text-emerald-600 bg-emerald-50 p-3 rounded-2xl border border-emerald-100 shadow-sm">
-                                 <Check className="w-4 h-4" /> LEMBRETE DE AULA ENVIADO
-                               </div>
-                             )}
-                          </div>
+                    <div className="w-full md:w-64 space-y-6">
+                       <div className="space-y-4">
+                         <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Responsável</p>
+                            <p className="font-bold text-slate-700 leading-tight">{exp.responsavel1 || '--'}</p>
+                            {exp.whatsapp1 && (
+                              <div className="flex items-center gap-2 text-green-600 font-bold text-xs mt-1">
+                                <MessageCircle className="w-3.5 h-3.5" /> {exp.whatsapp1}
+                              </div>
+                            )}
+                         </div>
+                         
+                         {isConverted && (
+                           <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl">
+                              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
+                                <ArrowUpRight className="w-3 h-3" /> Conversão Detectada
+                              </p>
+                              <p className="text-[11px] text-emerald-800 font-bold mt-1">
+                                Aluno matriculado no curso de {exp.curso} após a aula experimental.
+                              </p>
+                           </div>
+                         )}
+                       </div>
+                       
+                       <div className="bg-slate-100 p-5 rounded-3xl">
+                          <p className="text-[9px] font-black text-slate-400 uppercase mb-2 tracking-widest">Orientações B+</p>
+                          <p className="text-[11px] text-slate-500 leading-relaxed italic font-medium">
+                            O registro de presença e o feedback técnico são cruciais para a conversão comercial da secretaria.
+                          </p>
                        </div>
                     </div>
                   </div>
@@ -458,43 +457,18 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
               </div>
             );
           }) : (
-            <div className="p-24 text-center">
-               <div className="w-20 h-20 bg-slate-50 text-slate-200 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                  <Search className="w-10 h-10" />
-               </div>
-               <h4 className="text-xl font-black text-slate-400 uppercase tracking-tight">Nenhum agendamento encontrado</h4>
-               <p className="text-slate-300 text-sm mt-1">
-                 {isProfessor ? 'Não localizamos leads agendados para as turmas onde você é professor nesta data.' : 'Nenhum lead agendado para os critérios selecionados.'}
-               </p>
+            <div className="p-24 text-center space-y-6">
+              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto border-2 border-dashed border-slate-100">
+                <FlaskConical className="w-10 h-10 text-slate-200" />
+              </div>
+              <h4 className="text-xl font-bold text-slate-800">Sem agendamentos para esta data</h4>
+              <p className="text-slate-400 max-w-xs mx-auto text-sm font-medium">
+                Selecione outra data no calendário ou realize uma nova sincronia com a planilha.
+              </p>
             </div>
           )}
         </div>
       </div>
-      {messageModal.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-10 animate-in zoom-in-95 duration-300 border border-slate-100">
-            <div className="flex items-center gap-5 mb-8">
-              <div className={`w-14 h-14 flex items-center justify-center ${messageModal.isLembrete ? 'bg-amber-500' : 'bg-[#0f172a]'} text-white rounded-[20px]`}>
-                {messageModal.isLembrete ? <Bell className="w-7 h-7" /> : <MessageCircle className="w-7 h-7" />}
-              </div>
-              <div>
-                <h3 className="text-2xl font-black tracking-tight leading-none mb-1">{messageModal.isLembrete ? 'Lembrete de Aula' : 'Contato Lead'}</h3>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{messageModal.exp?.estudante}</p>
-              </div>
-            </div>
-            <textarea 
-              value={messageModal.message} 
-              onChange={(e) => setMessageModal({...messageModal, message: e.target.value})} 
-              className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] h-48 mb-8 font-medium text-sm outline-none focus:border-indigo-500 transition-all resize-none shadow-inner" 
-            />
-            <button onClick={handleSendMessage} disabled={isSending} className={`w-full ${messageModal.isLembrete ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white py-6 rounded-3xl font-black text-sm flex items-center justify-center gap-4 transition-all active:scale-[0.98]`}>
-              {isSending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Zap className="w-6 h-6 fill-current" />} 
-              {isSending ? 'ENVIANDO...' : 'ENVIAR WHATSAPP'}
-            </button>
-            <button onClick={() => setMessageModal({...messageModal, isOpen: false})} className="w-full mt-6 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fechar</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
