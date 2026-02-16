@@ -66,6 +66,7 @@ function doPost(e) {
       var colStatus = headers.indexOf("status");
       var colConversao = headers.indexOf("conversao");
       var colLembrete = headers.indexOf("lembrete");
+      var colReagendar = headers.indexOf("reagendar"); // Esperado na Coluna O
       
       for (var i = 1; i < rows.length; i++) {
         var rowEstudante = normalizeText(rows[i][colEstudante]);
@@ -79,6 +80,7 @@ function doPost(e) {
           if (colStatus !== -1 && data.status !== undefined) sheet.getRange(i + 1, colStatus + 1).setValue(data.status);
           if (colConversao !== -1 && data.conversao !== undefined) sheet.getRange(i + 1, colConversao + 1).setValue(data.conversao);
           if (colLembrete !== -1 && data.lembrete !== undefined) sheet.getRange(i + 1, colLembrete + 1).setValue(data.lembrete);
+          if (colReagendar !== -1 && data.reagendar !== undefined) sheet.getRange(i + 1, colReagendar + 1).setValue(data.reagendar);
           break;
         }
       }
@@ -92,14 +94,13 @@ function doPost(e) {
       }
       
       var rows = sheet.getDataRange().getValues();
-      // Definição de colunas fixas para garantir alinhamento
       var colAluno = 0;   
       var colUnidade = 1; 
       var colTurma = 2;   
       var colData = 3;    
       var colStatus = 4;  
       var colObs = 5;     
-      var colAlarme = 6;  // Coluna G
+      var colAlarme = 6;  
 
       if (Array.isArray(data)) {
         data.forEach(function(p) {
@@ -125,7 +126,6 @@ function doPost(e) {
             sheet.getRange(foundIndex, colStatus + 1).setValue(p.status);
             sheet.getRange(foundIndex, colObs + 1).setValue(p.observacao || "");
             sheet.getRange(foundIndex, colUnidade + 1).setValue(p.unidade);
-            // Atualiza o Alarme se enviado (específico para retenção)
             if (p.alarme) sheet.getRange(foundIndex, colAlarme + 1).setValue(p.alarme);
           } else {
             sheet.appendRow([p.aluno, p.unidade, p.turma, p.data, p.status, p.observacao || "", p.alarme || ""]);

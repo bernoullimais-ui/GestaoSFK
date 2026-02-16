@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { 
     Users, 
@@ -16,7 +15,6 @@ import {
     MapPin,
     MessageSquareText,
     BookOpen,
-    ArrowPath,
     RefreshCw,
     FileSpreadsheet,
     ShieldAlert,
@@ -24,7 +22,9 @@ import {
     Contact2,
     UserX,
     ChevronRight,
-    AlertCircle
+    AlertCircle,
+    XCircle,
+    RotateCcw
 } from 'lucide-react';
 import { Presenca, Usuario, Aluno, Matricula, Turma, ViewType, AulaExperimental, AcaoRetencao } from '../types';
 
@@ -46,6 +46,7 @@ interface DashboardProps {
     token: string;
   };
   msgTemplate?: string;
+  msgReagendarTemplate?: string;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -60,7 +61,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   onNavigate,
   isLoading = false,
   whatsappConfig,
-  msgTemplate = "Olá *{{responsavel}}*, como foi a aula experimental de *{{estudante}}* hoje na SFK?"
+  msgTemplate = "Olá *{{responsavel}}*, como foi a aula experimental de *{{estudante}}* hoje na SFK?",
+  msgReagendarTemplate = "Olá *{{responsavel}}*, notamos que *{{estudante}}* não pôde comparecer à aula de *{{curso}}*. Vamos reagendar?"
 }) => {
   const [isSending, setIsSending] = useState(false);
   const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string }>({ isOpen: false, exp: null, message: '' });
@@ -73,7 +75,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const slugify = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 
   const churnAlerts = useMemo(() => {
-    if (!isMaster) return []; // Somente Master/Gestor vê os alertas no dashboard por enquanto
+    if (!isMaster) return [];
     
     const groups: Record<string, { presencas: Presenca[], alunoName: string, unidade: string, curso: string }> = {};
     
@@ -103,10 +105,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (tresFaltas || (ultimas9.length >= 9 && taxaCalculada >= 50)) {
-        const alertaId = `risk|${key}|${sortedPresencas[0].data}`;
-        const jaTratado = acoesRetencao.some(a => a.alertaId === alertaId);
+        const lastPresence = sortedPresencas[0];
+        const alertaId = `risk|${key}|${lastPresence.data}`;
         
-        if (!jaTratado) {
+        // Verifica se já foi tratado localmente nesta sessão ou se já consta como "Enviado" na planilha (Coluna G)
+        const jaTratadoLocal = acoesRetencao.some(a => a.alertaId === alertaId);
+        const jaEnviadoNaPlanilha = slugify(lastPresence.alarme) === 'enviado';
+        
+        if (!jaTratadoLocal && !jaEnviadoNaPlanilha) {
           alertas.push({
             id: alertaId,
             alunoName: group.alunoName,
@@ -225,21 +231,53 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!isMaster) return [];
     const hoje = new Date();
     hoje.setHours(23, 59, 59, 999);
+    
     return experimentais.filter(exp => {
       if (!exp.aula) return false;
       const dataAula = new Date(exp.aula);
       dataAula.setHours(12, 0, 0, 0); 
-      return exp.status === 'Presente' && !exp.convertido && dataAula <= hoje && !exp.followUpSent;
+      
+      const isPresentePendente = exp.status === 'Presente' && !exp.convertido && dataAula <= hoje && !exp.followUpSent;
+      const isAusenteReagendar = exp.status === 'Ausente' && !exp.convertido && dataAula <= hoje && !exp.reagendarEnviado;
+      
+      return isPresentePendente || isAusenteReagendar;
     }).sort((a, b) => new Date(a.aula).getTime() - new Date(b.aula).getTime());
   }, [experimentais, isMaster]);
 
   const openComposeModal = (exp: AulaExperimental) => {
     const responsavelFull = exp.responsavel1 || exp.estudante || '';
-    const pNomeResp = responsavelFull.trim().split(' ')[0];
-    const pNomeEst = exp.estudante.trim().split(' ')[0];
-    let msg = (msgTemplate || "Olá {{responsavel}}, como foi a aula de {{estudante}}?")
-      .replace(/{{responsavel}}/gi, pNomeResp).replace(/{{estudante}}/gi, pNomeEst)
-      .replace(/{{unidade}}/gi, exp.unidade).replace(/{{curso}}/gi, exp.curso);
+    const pNomeResp = responsavelFull.trim().split(' ')[0] || '';
+    const pNomeEst = (exp.estudante || '').trim().split(' ')[0] || '';
+    const unidade = exp.unidade || '';
+    const curso = exp.curso || '';
+    
+    let dataAulaFormatada = "";
+    if (exp.aula) {
+      const parts = String(exp.aula).split(' ')[0].split('-');
+      if (parts.length === 3) {
+        dataAulaFormatada = `${parts[2]}/${parts[1]}/${parts[0]}`;
+      } else {
+        dataAulaFormatada = exp.aula;
+      }
+    }
+    
+    const template = exp.status === 'Ausente' ? msgReagendarTemplate : msgTemplate;
+    let msg = template || '';
+
+    const replacements = [
+      { tags: [/{{responsavel}}/gi, /{{RESPONSAVEL}}/gi], value: pNomeResp },
+      { tags: [/{{estudante}}/gi, /{{ALUNO}}/gi, /{{aluno}}/gi], value: pNomeEst },
+      { tags: [/{{unidade}}/gi, /{{UNIDADE}}/gi], value: unidade },
+      { tags: [/{{curso}}/gi, /{{CURSO}}/gi], value: curso },
+      { tags: [/{{data}}/gi, /{{DATA}}/gi], value: dataAulaFormatada }
+    ];
+
+    replacements.forEach(rep => {
+      rep.tags.forEach(tag => {
+        msg = msg.replace(tag, rep.value);
+      });
+    });
+
     setMessageModal({ isOpen: true, exp, message: msg });
   };
 
@@ -257,7 +295,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else if (fone) {
         window.open(`https://wa.me/55${fone}?text=${encodeURIComponent(messageModal.message)}`, '_blank');
       }
-      if (onUpdateExperimental) await onUpdateExperimental({ ...messageModal.exp, followUpSent: true });
+      
+      if (onUpdateExperimental) {
+          if (messageModal.exp.status === 'Ausente') {
+              // MARCA COMO REAGENDADA CONFORME SOLICITAÇÃO
+              await onUpdateExperimental({ ...messageModal.exp, reagendarEnviado: true, status: 'Reagendada' });
+          } else {
+              await onUpdateExperimental({ ...messageModal.exp, followUpSent: true });
+          }
+      }
       setMessageModal({ ...messageModal, isOpen: false });
     } finally { setIsSending(false); }
   };
@@ -328,25 +374,38 @@ const Dashboard: React.FC<DashboardProps> = ({
                         <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest leading-none mt-1">Aulas Realizadas aguardando contato</p>
                     </div>
                   </div>
-                  <span className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl text-[10px] font-black border border-indigo-100 uppercase">{leadsParaConversao.length} Leads</span>
+                  <span className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl text-[10px] font-black border border-indigo-100 uppercase">{leadsParaConversao.length} Ações</span>
               </div>
               <div className="flex flex-col gap-4">
                   {leadsParaConversao.map(lead => (
-                    <div key={lead.id} className="bg-slate-50 p-6 rounded-[32px] border border-slate-100 group hover:border-indigo-200 transition-all flex flex-col md:flex-row md:items-center gap-6">
+                    <div key={lead.id} className={`bg-slate-50 p-6 rounded-[32px] border ${lead.status === 'Ausente' ? 'border-amber-100' : 'border-slate-100'} group hover:border-indigo-200 transition-all flex flex-col md:flex-row md:items-center gap-6`}>
                       <div className="flex items-center gap-4 flex-1">
-                          <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center font-black text-indigo-600 text-xl shadow-sm shrink-0">{lead.estudante.charAt(0)}</div>
+                          <div className={`w-12 h-12 bg-white rounded-2xl flex items-center justify-center font-black ${lead.status === 'Ausente' ? 'text-amber-600' : 'text-indigo-600'} text-xl shadow-sm shrink-0`}>{lead.estudante.charAt(0)}</div>
                           <div className="min-w-0">
                             <h4 className="font-black text-slate-800 uppercase truncate leading-none mb-2">{lead.estudante}</h4>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                                 <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" /><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{lead.unidade}</span></div>
                                 <div className="flex items-center gap-1.5"><BookOpen className="w-3.5 h-3.5 text-indigo-500" /><span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">{lead.curso}</span></div>
                                 <div className="flex items-center gap-2 text-indigo-500"><Calendar className="w-3.5 h-3.5" /><span className="text-[10px] font-black uppercase tracking-widest">{formatDatePT(lead.aula)}</span></div>
-                                <div className="flex items-center gap-1.5 text-emerald-500"><CheckCircle2 className="w-3.5 h-3.5" /><span className="text-[10px] font-black uppercase">Presente</span></div>
+                                
+                                {lead.status === 'Presente' ? (
+                                    <div className="flex items-center gap-1.5 text-emerald-500"><CheckCircle2 className="w-3.5 h-3.5" /><span className="text-[10px] font-black uppercase">Presente</span></div>
+                                ) : (
+                                    <div className="flex items-center gap-1.5 text-amber-600"><XCircle className="w-3.5 h-3.5" /><span className="text-[10px] font-black uppercase">Ausente (Propor Reagendamento)</span></div>
+                                )}
+
+                                {lead.observacaoProfessor && (
+                                  <div className="flex items-center gap-1.5 text-slate-600 italic">
+                                    <MessageSquareText className="w-3.5 h-3.5 text-slate-400" />
+                                    <span className="text-[9px] font-bold uppercase truncate max-w-[200px]" title={lead.observacaoProfessor}>{lead.observacaoProfessor}</span>
+                                  </div>
+                                )}
                             </div>
                           </div>
                       </div>
-                      <button onClick={() => openComposeModal(lead)} className="bg-white text-indigo-600 border-2 border-indigo-100 px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all active:scale-95 shadow-sm">
-                          <MessageCircle className="w-4 h-4" /> ENVIAR WHATSAPP
+                      <button onClick={() => openComposeModal(lead)} className={`bg-white ${lead.status === 'Ausente' ? 'text-amber-600 border-amber-100 hover:bg-amber-600 hover:border-amber-600' : 'text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:border-indigo-600'} border-2 px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 hover:text-white transition-all active:scale-95 shadow-sm`}>
+                          {lead.status === 'Ausente' ? <RotateCcw className="w-4 h-4" /> : <MessageCircle className="w-4 h-4" />} 
+                          {lead.status === 'Ausente' ? 'REAGENDAR WHATSAPP' : 'ENVIAR WHATSAPP'}
                       </button>
                     </div>
                   ))}
@@ -359,7 +418,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform"><Activity className="w-40 h-40" /></div>
               <div>
                 <h3 className="text-2xl font-black mb-4 uppercase tracking-tight">BI & Relatórios</h3>
-                <p className="text-indigo-200 text-sm mb-8 leading-relaxed">Acompanhe faturamento, taxas de conversão e fluxo de matrículas em tempo real.</p>
+                <p className="text-indigo-200 text-sm mb-8 leading-relaxed">Acompanhe faturamento, taxas de conversão e fluxo de matriculas em tempo real.</p>
               </div>
               <button onClick={() => onNavigate && onNavigate('relatorios')} className="bg-white text-indigo-950 px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-3 hover:bg-indigo-50 transition-all w-fit">ABRIR RELATÓRIOS <ArrowRight className="w-4 h-4" /></button>
             </div>
@@ -415,9 +474,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       {messageModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl p-10 animate-in zoom-in-95 duration-300">
-            <h3 className="text-2xl font-black tracking-tight mb-8">Mensagem Lead</h3>
+            <h3 className="text-2xl font-black tracking-tight mb-8">
+                {messageModal.exp?.status === 'Ausente' ? 'Propor Reagendamento' : 'Mensagem Lead'}
+            </h3>
             <textarea value={messageModal.message} onChange={(e) => setMessageModal({...messageModal, message: e.target.value})} className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] h-48 mb-8 font-medium text-sm outline-none focus:border-indigo-500 transition-all resize-none shadow-inner" />
-            <button onClick={handleSendMessage} disabled={isSending} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-6 rounded-3xl font-black text-sm flex items-center justify-center gap-4 transition-all active:scale-[0.98]">
+            <button onClick={handleSendMessage} disabled={isSending} className={`w-full ${messageModal.exp?.status === 'Ausente' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white py-6 rounded-3xl font-black text-sm flex items-center justify-center gap-4 transition-all active:scale-[0.98]`}>
               {isSending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Zap className="w-6 h-6 fill-current" />} 
               {isSending ? 'ENVIANDO...' : 'ENVIAR AGORA'}
             </button>

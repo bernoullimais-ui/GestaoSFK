@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { 
   FlaskConical, 
@@ -32,7 +31,8 @@ import {
   CalendarCheck,
   BookOpen,
   LayoutGrid,
-  History
+  History,
+  RotateCcw
 } from 'lucide-react';
 import { AulaExperimental, Usuario, Turma, Aluno } from '../types';
 
@@ -306,11 +306,11 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
               <div key={exp.id} className={`group transition-all ${expandedId === exp.id ? 'bg-slate-50/50' : 'hover:bg-slate-50/30'}`}>
                 <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                   <div className="flex items-center gap-5 flex-1">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl shadow-sm ${currentStatus === 'Presente' ? 'bg-emerald-600 text-white' : currentStatus === 'Ausente' ? 'bg-red-500 text-white' : 'bg-indigo-600 text-white'}`}>
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl shadow-sm ${currentStatus === 'Presente' ? 'bg-emerald-600 text-white' : currentStatus === 'Ausente' ? 'bg-red-500 text-white' : currentStatus === 'Reagendada' ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
                       {exp.estudante.charAt(0)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h4 className="text-lg font-black text-slate-900 leading-tight truncate pr-4 uppercase" title={exp.estudante}>{exp.estudante}</h4>
                         {exp.convertido && (
                           <button 
@@ -321,12 +321,33 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                             {needsSheetUpdate ? 'Confirmar na Planilha' : 'MATRICULADO'}
                           </button>
                         )}
+                        {currentStatus === 'Reagendada' && (
+                          <span className="px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 text-[8px] font-black uppercase flex items-center gap-1 shrink-0">
+                            <RotateCcw className="w-2 h-2" /> Reagendada
+                          </span>
+                        )}
+                        {exp.reagendarEnviado && (
+                          <span className="px-2 py-1 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-600 text-[9px] font-black uppercase flex items-center gap-1.5 shrink-0 shadow-sm">
+                            <Send className="w-2.5 h-2.5" /> REAGENDAMENTO ENVIADO
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-3 mt-2">
+                        {/* UNIDADE */}
                         <div className="flex items-center gap-1.5 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100 shadow-sm">
                            <MapPin className="w-3.5 h-3.5 text-blue-500" />
                            <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">{exp.unidade}</span>
                         </div>
+                        
+                        {/* ESCOLARIDADE */}
+                        {escolaridade && (
+                          <div className="flex items-center gap-1.5 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-100 shadow-sm">
+                             <BookOpen className="w-3.5 h-3.5 text-purple-600" />
+                             <span className="text-[10px] font-black text-purple-700 uppercase tracking-widest leading-none">{escolaridade}</span>
+                          </div>
+                        )}
+
+                        {/* MODALIDADE */}
                         <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 shadow-sm">
                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
                            <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest leading-none">{modalidade || '--'}</span>

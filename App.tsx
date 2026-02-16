@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Menu, 
   LayoutDashboard,
@@ -26,7 +25,10 @@ import {
   FileText,
   MessageSquare,
   MessageCircle,
-  Globe
+  Globe,
+  Loader2,
+  Cpu,
+  Shield
 } from 'lucide-react';
 import { Aluno, Turma, Matricula, Presenca, Usuario, ViewType, AulaExperimental, AcaoRetencao } from './types';
 import { INITIAL_USUARIOS } from './constants';
@@ -59,6 +61,7 @@ const App: React.FC = () => {
   const [tplFeedback, setTplFeedback] = useState(() => localStorage.getItem('sfk_tpl_feedback') || "");
   const [tplRetencao, setTplRetencao] = useState(() => localStorage.getItem('sfk_tpl_retencao') || "");
   const [tplMensagem, setTplMensagem] = useState(() => localStorage.getItem('sfk_tpl_mensagem') || "");
+  const [tplReagendar, setTplReagendar] = useState(() => localStorage.getItem('sfk_tpl_reagendar') || "");
 
   const [alunos, setAlunos] = useState<Aluno[]>(() => JSON.parse(localStorage.getItem('sfk_alunos') || '[]'));
   const [turmas, setTurmas] = useState<Turma[]>(() => JSON.parse(localStorage.getItem('sfk_turmas') || '[]'));
@@ -67,6 +70,8 @@ const App: React.FC = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>(() => JSON.parse(localStorage.getItem('sfk_usuarios') || JSON.stringify(INITIAL_USUARIOS)));
   const [experimentais, setExperimentais] = useState<AulaExperimental[]>(() => JSON.parse(localStorage.getItem('sfk_experimentais') || '[]'));
   const [acoesRetencao, setAcoesRetencao] = useState<AcaoRetencao[]>(() => JSON.parse(localStorage.getItem('sfk_acoes_retencao') || '[]'));
+
+  const [lastScheduledSync, setLastScheduledSync] = useState<string>('');
 
   const normalizeStr = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
@@ -90,7 +95,7 @@ const App: React.FC = () => {
     return "";
   };
 
-  const syncFromSheets = async (isSilent: boolean = false) => {
+  const syncFromSheets = useCallback(async (isSilent: boolean = false) => {
     if (!apiUrl) return false;
     if (!isSilent) setIsLoading(true);
     setSyncError(null);
@@ -107,17 +112,20 @@ const App: React.FC = () => {
         const feedback = config.templatefeedback || config.templatefeddback || ""; 
         const retencao = config.templateretencao || "";
         const mensagem = config.templatemensagem || "";
+        const reagendar = config.templatereagendar || "";
         setWebhookUrl(webhook);
         setTplLembrete(lembrete);
         setTplFeedback(feedback);
         setTplRetencao(retencao);
         setTplMensagem(mensagem);
+        setTplReagendar(reagendar);
         if (apiFromSheet) localStorage.setItem('sfk_script_url', apiFromSheet);
         localStorage.setItem('sfk_webhook_url', webhook);
         localStorage.setItem('sfk_tpl_lembrete', lembrete);
         localStorage.setItem('sfk_tpl_feedback', feedback);
         localStorage.setItem('sfk_tpl_retencao', retencao);
         localStorage.setItem('sfk_tpl_mensagem', mensagem);
+        localStorage.setItem('sfk_tpl_reagendar', reagendar);
       }
 
       const cleanPhone = (p: any): string => {
@@ -180,6 +188,7 @@ const App: React.FC = () => {
         const alunoNaBase = studentsMap.get(studentKey);
         const jaMatriculadoPelaBase = alunoNaBase && alunoNaBase.statusMatricula === 'Ativo';
         const convertidoPlanilha = String(e.conversao || e.matriculado || "").toLowerCase() === 'true' || e.conversao === true;
+        const reagendarEnviado = String(e.reagendar || "").toLowerCase() === 'true' || e.reagendar === true;
         
         return {
           ...e,
@@ -195,7 +204,8 @@ const App: React.FC = () => {
           lembreteEnviado: lembreteEnviado,
           followUpSent: followUpSent,
           convertido: jaMatriculadoPelaBase || convertidoPlanilha,
-          convertidoNaPlanilha: convertidoPlanilha
+          convertidoNaPlanilha: convertidoPlanilha,
+          reagendarEnviado: reagendarEnviado
         };
       });
 
@@ -220,7 +230,6 @@ const App: React.FC = () => {
         valorMensal: t.valormensal || t.custo || t.valor || 0
       }));
 
-      // --- SINCRONIZAÇÃO DE FREQUÊNCIA (LENDO COLUNA G) ---
       const mappedPresencas = (data.frequencia || []).map((p: any, idx: number) => ({
         id: `pres-${idx}`,
         alunoId: p.estudante || "",
@@ -229,7 +238,7 @@ const App: React.FC = () => {
         data: parseSheetDate(p.data),
         status: p.status || "Ausente",
         observacao: p.observacao || "",
-        alarme: p.alarme || "", // Coluna G
+        alarme: p.alarme || "", 
         _estudantePlanilha: p.estudante,
         _turmaPlanilha: p.turma
       }));
@@ -256,12 +265,31 @@ const App: React.FC = () => {
     } finally {
       if (!isSilent) setIsLoading(false);
     }
-  };
+  }, [apiUrl, normalizeStr]);
+
+  useEffect(() => {
+    const scheduledTimes = ['06:00', '11:00', '11:10', '11:20', '11:30', '15:00'];
+    
+    const checkSchedule = () => {
+      const now = new Date();
+      const currentHHMM = now.getHours().toString().padStart(2, '0') + ':' + 
+                          now.getMinutes().toString().padStart(2, '0');
+      
+      if (scheduledTimes.includes(currentHHMM) && lastScheduledSync !== currentHHMM) {
+        setLastScheduledSync(currentHHMM);
+        syncFromSheets(true);
+        console.log(`[SFK] Sincronização automática silenciosa executada às ${currentHHMM}`);
+      }
+    };
+
+    const interval = setInterval(checkSchedule, 30000);
+    return () => clearInterval(interval);
+  }, [lastScheduledSync, syncFromSheets]);
 
   useEffect(() => {
     const boot = async () => { await syncFromSheets(true); setIsBooting(false); };
     boot();
-  }, []);
+  }, [syncFromSheets]);
 
   useEffect(() => {
     if (user) {
@@ -273,18 +301,16 @@ const App: React.FC = () => {
   const handleUpdateExperimental = async (updated: AulaExperimental) => {
     setIsLoading(true);
     try {
-      await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_experimental', data: { estudante: updated.estudante, curso: updated.curso, status: updated.status, feedback: updated.observacaoProfessor, enviado: updated.followUpSent, conversao: updated.convertido, lembrete: updated.lembreteEnviado } }) });
+      await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_experimental', data: { estudante: updated.estudante, curso: updated.curso, status: updated.status, feedback: updated.observacaoProfessor, enviado: updated.followUpSent, conversao: updated.convertido, lembrete: updated.lembreteEnviado, reagendar: updated.reagendarEnviado } }) });
       setExperimentais(prev => prev.map(e => e.id === updated.id ? { ...updated, convertidoNaPlanilha: updated.convertido } : e));
       setSyncSuccess("Planilha Atualizada!");
       setTimeout(() => setSyncSuccess(null), 3000);
     } catch (e) { setSyncError("Erro ao gravar."); } finally { setIsLoading(false); }
   };
 
-  // Função para registrar o alarme de retenção na planilha (Coluna G)
   const handleRegisterRetentionAction = async (lastPresence: Presenca) => {
     setIsLoading(true);
     try {
-      // Usamos a mesma ação 'save_frequencia' garantindo que o campo 'alarme' seja enviado
       await fetch(apiUrl, { 
         method: 'POST', 
         mode: 'no-cors', 
@@ -297,12 +323,11 @@ const App: React.FC = () => {
             data: lastPresence.data, 
             status: lastPresence.status, 
             observacao: lastPresence.observacao || "",
-            alarme: "Enviado" // Marca na coluna G
+            alarme: "Enviado" 
           }] 
         }) 
       });
       
-      // Atualiza localmente
       setPresencas(prev => prev.map(p => 
         (p.alunoId === lastPresence.alunoId && p.turmaId === lastPresence.turmaId && p.data === lastPresence.data) 
         ? { ...p, alarme: "Enviado" } 
@@ -318,7 +343,66 @@ const App: React.FC = () => {
     }
   };
 
-  if (isBooting) return <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 text-white text-center flex-col gap-4"><Activity className="w-16 h-16 text-indigo-500 animate-pulse" /><h1 className="text-2xl font-black uppercase tracking-widest">SFK GESTÃO V2.0</h1></div>;
+  if (isBooting) return (
+    <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 relative overflow-hidden font-inter animate-in fade-in duration-1000">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-20%] left-[-15%] w-[60%] h-[60%] bg-indigo-900/40 rounded-full blur-[140px]" />
+        <div className="absolute bottom-[-15%] right-[-10%] w-[50%] h-[50%] bg-blue-950/40 rounded-full blur-[120px]" />
+      </div>
+
+      <div className="relative z-10 flex flex-col items-center w-full max-w-lg">
+        <div className="mb-14 relative group">
+          <div className="absolute inset-0 bg-[#2e297e] rounded-[50px] blur-[60px] opacity-60 animate-pulse" />
+          <div className="w-32 h-32 bg-[#2e297e]/80 backdrop-blur-md rounded-[46px] flex items-center justify-center shadow-[0_0_80px_-10px_rgba(79,70,229,0.8)] border border-white/20 relative z-10">
+            <Activity className="w-16 h-16 text-white animate-pulse" />
+          </div>
+        </div>
+        
+        <div className="text-center mb-20 space-y-4">
+          <h1 className="text-6xl font-black text-white uppercase tracking-tighter leading-none drop-shadow-2xl">GESTÃO SFK</h1>
+          <p className="text-[#818cf8] font-bold uppercase text-[10px] tracking-[0.6em] opacity-90">
+            SPORT FOR KIDS INTELLIGENCE
+          </p>
+        </div>
+        
+        <div className="w-full bg-white/5 backdrop-blur-2xl rounded-[44px] border border-white/10 p-12 shadow-[0_40px_100px_-20px_rgba(0,0,0,0.7)] overflow-hidden relative">
+          <div className="flex items-center gap-6 mb-10">
+            <div className="w-14 h-14 bg-indigo-600/90 rounded-2xl flex items-center justify-center shadow-2xl shadow-indigo-500/40 border border-white/20">
+              <RefreshCw className="w-7 h-7 text-white animate-spin" />
+            </div>
+            <div className="flex-1">
+              <p className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-1.5 leading-none">STATUS DO SISTEMA</p>
+              <p className="text-base font-bold text-white/95 uppercase tracking-tight">Sincronizando Inteligência SFK...</p>
+            </div>
+          </div>
+          
+          <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden relative">
+            <div className="absolute top-0 h-full w-1/3 bg-gradient-to-r from-transparent via-indigo-400 to-transparent" style={{
+              animation: 'shimmer-traverse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite'
+            }} />
+          </div>
+          <style dangerouslySetInnerHTML={{ __html: `
+            @keyframes shimmer-traverse {
+              0% { left: -40%; }
+              100% { left: 100%; }
+            }
+          `}} />
+        </div>
+
+        <div className="mt-24 flex flex-col items-center gap-8 opacity-40 grayscale transition-all duration-1000">
+          <div className="flex items-center gap-10">
+            <Cpu className="w-7 h-7 text-indigo-400" />
+            <Layers className="w-7 h-7 text-indigo-400" />
+            <Shield className="w-7 h-7 text-indigo-400" />
+          </div>
+          <p className="text-[9px] font-black text-white/40 uppercase tracking-[0.5em] text-center">
+            SINCRONISMO DE SEGURANÇA ATIVO
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
   if (!user) return <Login onLogin={setUser} usuarios={usuarios} />;
 
   const isMaster = user.nivel === 'Gestor Master' || user.nivel === 'Start';
@@ -333,7 +417,7 @@ const App: React.FC = () => {
     { id: 'preparacao', label: 'Preparação', icon: ClipboardList, visible: isGestor || isRegente }, 
     { id: 'frequencia', label: 'Freqüência', icon: CheckCircle2, visible: isProfessor || isMaster },
     { id: 'experimental', label: 'Experimentais', icon: FlaskConical, visible: true }, 
-    { id: 'relatorios', label: (user.nivel === 'Gestor' || user.nivel === 'Coordenador') ? 'Fluxo de Matrículas' : 'Relatórios', icon: BarChart3, visible: isGestor },
+    { id: 'relatorios', label: isGestor ? 'Business Intelligence' : 'Relatórios', icon: BarChart3, visible: isGestor },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign, visible: isMaster },
     { id: 'churn-risk', label: 'Retenção', icon: UserX, visible: isMaster },
     { id: 'usuarios', label: 'Equipe', icon: ShieldCheck, visible: isMaster },
@@ -348,8 +432,8 @@ const App: React.FC = () => {
           <nav className="flex-1 space-y-1">
             {menuItems.filter(i => i.visible).map((item) => (
               <button key={item.id} onClick={() => { setCurrentView(item.id as ViewType); setIsSidebarOpen(false); }} className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl transition-all ${currentView === item.id ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-                <item.icon className="w-5 h-5" />
-                <span className="font-bold text-xs uppercase tracking-widest">{item.label}</span>
+                <item.icon className="w-5 h-5 shrink-0" />
+                <span className="font-bold text-xs uppercase tracking-widest whitespace-nowrap overflow-hidden text-ellipsis">{item.label}</span>
               </button>
             ))}
           </nav>
@@ -376,7 +460,7 @@ const App: React.FC = () => {
           </div>
         </header>
         <div className="flex-1 overflow-y-auto p-8 lg:p-12">
-          {currentView === 'dashboard' && <Dashboard user={user} alunosCount={alunos.length} turmasCount={turmas.length} turmas={turmas} presencas={presencas} alunos={alunos} matriculas={matriculas} experimentais={experimentais} acoesRetencao={acoesRetencao} onNavigate={setCurrentView} onUpdateExperimental={handleUpdateExperimental} isLoading={isLoading} whatsappConfig={{ url: webhookUrl, token: "" }} msgTemplate={tplFeedback} />}
+          {currentView === 'dashboard' && <Dashboard user={user} alunosCount={alunos.length} turmasCount={turmas.length} turmas={turmas} presencas={presencas} alunos={alunos} matriculas={matriculas} experimentais={experimentais} acoesRetencao={acoesRetencao} onNavigate={setCurrentView} onUpdateExperimental={handleUpdateExperimental} isLoading={isLoading} whatsappConfig={{ url: webhookUrl, token: "" }} msgTemplate={tplFeedback} msgReagendarTemplate={tplReagendar} />}
           {currentView === 'dados-alunos' && <DadosAlunos alunos={alunos} turmas={turmas} matriculas={matriculas} user={user} whatsappConfig={{ url: webhookUrl, token: "" }} msgTemplate={tplMensagem} />}
           {currentView === 'turmas' && <TurmasList turmas={turmas} matriculas={matriculas} alunos={alunos} currentUser={user} />}
           {currentView === 'frequencia' && <Frequencia turmas={turmas} alunos={alunos} matriculas={matriculas} presencas={presencas} onSave={async (recs) => { setIsLoading(true); try { await fetch(apiUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'save_frequencia', data: recs.map(p => ({ aluno: (alunos.find(a => a.id === p.alunoId)?.nome) || p.alunoId, unidade: p.unidade, turma: (turmas.find(t => t.id === p.turmaId)?.nome) || p.turmaId, data: p.data, status: p.status, observacao: p.observacao || "" })) }) }); setPresencas(prev => [...prev, ...recs]); setSyncSuccess("Freqüência Salva!"); setTimeout(() => setSyncSuccess(null), 3000); } catch (e) { setSyncError("Erro ao salvar."); } finally { setIsLoading(false); } }} currentUser={user} />}
@@ -390,7 +474,7 @@ const App: React.FC = () => {
             <div className="max-w-6xl mx-auto space-y-12 animate-in fade-in duration-500 pb-24">
               <div className="flex items-center justify-between">
                 <div className="space-y-1"><h2 className="text-4xl font-black text-slate-800 uppercase tracking-tighter leading-none">Configurações</h2><p className="text-slate-500 font-medium text-sm">Controle de APIs e Templates de Mensagens.</p></div>
-                <button onClick={() => { localStorage.setItem('sfk_script_url', apiUrl); localStorage.setItem('sfk_webhook_url', webhookUrl); localStorage.setItem('sfk_tpl_lembrete', tplLembrete); localStorage.setItem('sfk_tpl_feedback', tplFeedback); localStorage.setItem('sfk_tpl_retencao', tplRetencao); localStorage.setItem('sfk_tpl_mensagem', tplMensagem); setSyncSuccess("Ajustes Salvos!"); setTimeout(() => setSyncSuccess(null), 3000); }} className="bg-indigo-600 text-white px-10 py-5 rounded-[24px] font-black text-[11px] uppercase tracking-widest flex items-center gap-4 shadow-xl hover:bg-indigo-700 transition-all active:scale-95"><Save className="w-5 h-5" /> Salvar Localmente</button>
+                <button onClick={() => { localStorage.setItem('sfk_script_url', apiUrl); localStorage.setItem('sfk_webhook_url', webhookUrl); localStorage.setItem('sfk_tpl_lembrete', tplLembrete); localStorage.setItem('sfk_tpl_feedback', tplFeedback); localStorage.setItem('sfk_tpl_retencao', tplRetencao); localStorage.setItem('sfk_tpl_mensagem', tplMensagem); localStorage.setItem('sfk_tpl_reagendar', tplReagendar); setSyncSuccess("Ajustes Salvos!"); setTimeout(() => setSyncSuccess(null), 3000); }} className="bg-indigo-600 text-white px-10 py-5 rounded-[24px] font-black text-[11px] uppercase tracking-widest flex items-center gap-4 shadow-xl hover:bg-indigo-700 transition-all active:scale-95"><Save className="w-5 h-5" /> Salvar Localmente</button>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
                 <div className="lg:col-span-5 bg-white p-12 rounded-[50px] shadow-sm border border-slate-100 space-y-10">
@@ -407,6 +491,7 @@ const App: React.FC = () => {
                     <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Template Feedback (D)</label><textarea value={tplFeedback} onChange={e => setTplFeedback(e.target.value)} className="w-full h-32 p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] focus:border-indigo-500 outline-none text-xs font-medium resize-none shadow-inner" placeholder="Mensagem pós-aula experimental..." /></div>
                     <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Template Retenção (E)</label><textarea value={tplRetencao} onChange={e => setTplRetencao(e.target.value)} className="w-full h-32 p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] focus:border-indigo-500 outline-none text-xs font-medium resize-none shadow-inner" placeholder="Mensagem para alunos ausentes..." /></div>
                     <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Template Mensagem (F)</label><textarea value={tplMensagem} onChange={e => setTplMensagem(e.target.value)} className="w-full h-32 p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] focus:border-indigo-500 outline-none text-xs font-medium resize-none shadow-inner" placeholder="Mensagem geral do cadastro de alunos..." /></div>
+                    <div className="space-y-2 md:col-span-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Template Reagendamento (O)</label><textarea value={tplReagendar} onChange={e => setTplReagendar(e.target.value)} className="w-full h-32 p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] focus:border-indigo-500 outline-none text-xs font-medium resize-none shadow-inner" placeholder="Mensagem para ausentes (propor reagendamento)..." /></div>
                   </div>
                 </div>
               </div>

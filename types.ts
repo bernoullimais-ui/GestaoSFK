@@ -80,12 +80,13 @@ export interface AulaExperimental {
   aula: string;
   responsavel1?: string;
   whatsapp1?: string;
-  status?: 'Pendente' | 'Presente' | 'Ausente';
+  status?: 'Pendente' | 'Presente' | 'Ausente' | 'Reagendada';
   observacaoProfessor?: string;
   dataStatusAtualizado?: string;
   followUpSent?: boolean;
   lembreteEnviado?: boolean;
   convertido?: boolean;
+  reagendarEnviado?: boolean; // Coluna O
   // Campos adicionais para escolaridade
   etapa?: string;
   anoEscolar?: string;

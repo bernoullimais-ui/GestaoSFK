@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Calendar, 
@@ -72,26 +71,23 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
   const isMaster = user.nivel === 'Gestor Master' || user.nivel === 'Start' || normalizeText(user.unidade) === 'todas';
+  const isGestorTier = user.nivel === 'Gestor' || user.nivel === 'Coordenador' || isMaster;
   
-  const [activeTab, setActiveTab] = useState<'frequencia_geral' | 'bi' | 'secretaria'>(isMaster ? 'bi' : 'bi');
-  const [biSubTab, setBiSubTab] = useState<'frequencia' | 'conversao' | 'fluxo'>(isMaster ? 'conversao' : 'fluxo');
+  const [activeTab, setActiveTab] = useState<'frequencia_geral' | 'bi' | 'secretaria'>(isGestorTier ? 'bi' : 'bi');
+  const [biSubTab, setBiSubTab] = useState<'frequencia' | 'conversao' | 'fluxo'>(isGestorTier ? 'conversao' : 'fluxo');
   
   const [filtroUnidadeBI, setFiltroUnidadeBI] = useState('');
   
-  const [conversaoDataInicio, setConversaoDataInicio] = useState('');
-  const [conversaoDataFim, setConversaoDataFim] = useState('');
+  // Unificação das datas para todos os filtros de período do BI
+  const [dataInicio, setDataInicio] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().split('T')[0]);
   
   const [freqEstudante, setFreqEstudante] = useState('');
   const [freqUnidade, setFreqUnidade] = useState('');
   const [freqTurma, setFreqTurma] = useState('');
-  const [freqDataInicio, setFreqDataInicio] = useState('');
-  const [freqDataFim, setFreqDataFim] = useState('');
-
-  const [fluxoDataInicio, setFluxoDataInicio] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-  });
-  const [fluxoDataFim, setFluxoDataFim] = useState(() => new Date().toISOString().split('T')[0]);
 
   const [filtroStatusSec, setFiltroStatusSec] = useState<'todos' | 'ativos' | 'cancelados'>('todos');
   const [filtroUnidadeSec, setFiltroUnidadeSec] = useState('');
@@ -161,8 +157,8 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
 
   // --- LÓGICA BI FREQUÊNCIA ---
   const statsBIFrequencia = useMemo(() => {
-    const start = parseToDate(freqDataInicio);
-    const end = parseToDate(freqDataFim);
+    const start = parseToDate(dataInicio);
+    const end = parseToDate(dataFim);
     
     let filtered = presencas.filter(p => {
       const unitFromRecord = p.unidade;
@@ -178,37 +174,38 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     const presentes = filtered.filter(p => p.status === 'Presente').length;
     const mediaGeral = totalRegistros > 0 ? Math.round((presentes / totalRegistros) * 100) : 0;
 
-    // Tendência Temporal
     const timeMap: Record<string, { label: string, p: number, f: number }> = {};
     filtered.forEach(p => {
       const d = parseToDate(p.data);
       if (!d) return;
-      const key = p.data; // YYYY-MM-DD
+      const key = p.data; 
       if (!timeMap[key]) timeMap[key] = { label: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), p: 0, f: 0 };
       if (p.status === 'Presente') timeMap[key].p++; else timeMap[key].f++;
     });
     const trendData = Object.values(timeMap).map(v => ({ ...v, pct: Math.round((v.p / (v.p + v.f)) * 100) })).slice(-15);
 
-    // Ranking por Turma
-    const turmaMap: Record<string, { name: string, p: number, f: number }> = {};
+    const turmaMap: Record<string, { name: string, unidade: string, p: number, f: number }> = {};
     filtered.forEach(p => {
       const tName = (p as any)._turmaPlanilha || p.turmaId;
-      if (!turmaMap[tName]) turmaMap[tName] = { name: tName, p: 0, f: 0 };
-      if (p.status === 'Presente') turmaMap[tName].p++; else turmaMap[tName].f++;
+      const unit = p.unidade;
+      const key = `${tName}|${unit}`;
+      if (!turmaMap[key]) turmaMap[key] = { name: tName, unidade: unit, p: 0, f: 0 };
+      if (p.status === 'Presente') turmaMap[key].p++; else turmaMap[key].f++;
     });
     const rankingData = Object.values(turmaMap)
-      .map(v => ({ name: v.name, pct: Math.round((v.p / (v.p + v.f)) * 100) }))
+      .map(v => ({ name: v.name, unidade: v.unidade, pct: Math.round((v.p / (v.p + v.f)) * 100) }))
       .sort((a, b) => b.pct - a.pct)
       .slice(0, 8);
 
     return { mediaGeral, presentes, totalRegistros, trendData, rankingData };
-  }, [presencas, filtroUnidadeBI, freqDataInicio, freqDataFim, isMaster, unidadesUnicas]);
+  }, [presencas, filtroUnidadeBI, dataInicio, dataFim, isMaster, unidadesUnicas]);
 
+  // --- LÓGICA BI CONVERSÃO ---
   const statsConversao = useMemo(() => {
     let filtered = experimentais;
     if (filtroUnidadeBI) filtered = filtered.filter(e => normalizeText(e.unidade) === normalizeText(filtroUnidadeBI));
-    const start = parseToDate(conversaoDataInicio);
-    const end = parseToDate(conversaoDataFim);
+    const start = parseToDate(dataInicio);
+    const end = parseToDate(dataFim);
     if (start || end) {
       filtered = filtered.filter(e => {
         const d = parseToDate(e.aula);
@@ -224,6 +221,7 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     const matriculados = filtered.filter(e => e.convertido).length;
     const taxaComparecimento = agendamentos > 0 ? Math.round((presentes / agendamentos) * 100) : 0;
     const conversaoReal = presentes > 0 ? Math.round((matriculados / presentes) * 100) : 0;
+    
     const chartDataMap: Record<string, { label: string, agendamentos: number, matriculas: number }> = {};
     experimentais.forEach(e => {
       const d = parseToDate(e.aula);
@@ -240,11 +238,12 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     });
     const chartData = Object.entries(chartDataMap).sort((a, b) => a[0].localeCompare(b[0])).map(([_, val]) => val).slice(-6);
     return { agendamentos, presentes, followUps, matriculados, taxaComparecimento, conversaoReal, chartData, filteredRaw: filtered };
-  }, [experimentais, filtroUnidadeBI, conversaoDataInicio, conversaoDataFim, isMaster, unidadesUnicas]);
+  }, [experimentais, filtroUnidadeBI, dataInicio, dataFim, isMaster, unidadesUnicas]);
 
+  // --- LÓGICA BI FLUXO ---
   const statsFluxo = useMemo(() => {
-    const start = parseToDate(fluxoDataInicio);
-    const end = parseToDate(fluxoDataFim);
+    const start = parseToDate(dataInicio);
+    const end = parseToDate(dataFim);
     if (!start || !end) return { data: [], totals: { inicio: 0, novas: 0, cancelados: 0, fim: 0 } };
     let filteredTurmas = turmas;
     if (filtroUnidadeBI) filteredTurmas = turmas.filter(t => normalizeText(t.unidade) === normalizeText(filtroUnidadeBI));
@@ -273,7 +272,7 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     const dataList = Object.values(stats).map(s => ({ ...s, fim: s.inicio + s.novas - s.cancelados })).sort((a, b) => a.turma.localeCompare(b.turma));
     const totals = dataList.reduce((acc, curr) => ({ inicio: acc.inicio + curr.inicio, novas: acc.novas + curr.novas, cancelados: acc.cancelados + curr.cancelados, fim: acc.fim + curr.fim, }), { inicio: 0, novas: 0, cancelados: 0, fim: 0 });
     return { data: dataList, totals };
-  }, [matriculas, alunos, turmas, fluxoDataInicio, fluxoDataFim, filtroUnidadeBI, isMaster, unidadesUnicas]);
+  }, [matriculas, alunos, turmas, dataInicio, dataFim, filtroUnidadeBI, isMaster, unidadesUnicas]);
 
   const getCursosDoAluno = (alunoId: string) => matriculas.filter(m => m.alunoId === alunoId).map(m => {
     const t = turmas.find(t => t.id === m.turmaId || normalizeText(t.nome) === normalizeText(m.turmaId.split('-')[0]));
@@ -295,8 +294,8 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
 
   const statsFrequenciaGeral = useMemo(() => {
     const grouped: Record<string, { data: string, unidade: string, turma: string, p: number, f: number, tema: string }> = {};
-    const start = parseToDate(freqDataInicio);
-    const end = parseToDate(freqDataFim);
+    const start = parseToDate(dataInicio);
+    const end = parseToDate(dataFim);
     presencas.forEach(pres => {
       const studentName = (pres as any)._estudantePlanilha || pres.alunoId;
       const className = (pres as any)._turmaPlanilha || pres.turmaId;
@@ -319,7 +318,7 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
       if (pres.status === 'Presente') grouped[key].p++; else grouped[key].f++;
     });
     return Object.values(grouped).sort((a, b) => b.data.localeCompare(a.data));
-  }, [presencas, turmas, alunos, freqEstudante, freqTurma, freqUnidade, freqDataInicio, freqDataFim, isMaster, unidadesUnicas]);
+  }, [presencas, turmas, alunos, freqEstudante, freqTurma, freqUnidade, dataInicio, dataFim, isMaster, unidadesUnicas]);
 
   const handleExportCSV = () => {
     let headers: string[] = [];
@@ -355,8 +354,8 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
     <div className="space-y-6 pb-20 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 tracking-tight">{isMaster ? 'Painéis de Inteligência B+' : 'Fluxo de Matrículas'}</h2>
-          {isMaster && (
+          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Business Intelligence</h2>
+          {isGestorTier && (
             <div className="flex items-center gap-6 mt-3">
               <button onClick={() => setActiveTab('frequencia_geral')} className={`text-[11px] font-black uppercase tracking-widest pb-2 border-b-4 transition-all ${activeTab === 'frequencia_geral' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400'}`}>FREQUÊNCIA</button>
               <button onClick={() => setActiveTab('bi')} className={`text-[11px] font-black uppercase tracking-widest pb-2 border-b-4 transition-all ${activeTab === 'bi' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400'}`}>VISÃO ESTRATÉGICA (BI)</button>
@@ -394,9 +393,9 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
               </div>
               <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-100 shadow-sm">
                 <Calendar className="w-3.5 h-3.5 text-blue-500" />
-                <input type="date" value={freqDataInicio} onChange={e => setFreqDataInicio(e.target.value)} className="bg-slate-50 border-none rounded-lg text-[10px] font-bold outline-none px-2 py-1" />
+                <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="bg-slate-50 border-none rounded-lg text-[10px] font-bold outline-none px-2 py-1" />
                 <span className="text-slate-300">até</span>
-                <input type="date" value={freqDataFim} onChange={e => setFreqDataFim(e.target.value)} className="bg-slate-50 border-none rounded-lg text-[10px] font-bold outline-none px-2 py-1" />
+                <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="bg-slate-50 border-none rounded-lg text-[10px] font-bold outline-none px-2 py-1" />
               </div>
             </div>
           </div>
@@ -454,7 +453,10 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
                       {statsBIFrequencia.rankingData.map((item, idx) => (
                         <div key={idx} className="space-y-2">
                            <div className="flex justify-between items-center">
-                              <span className="text-[10px] font-black text-slate-500 uppercase truncate max-w-[180px]">{item.name}</span>
+                              <div className="min-w-0">
+                                 <span className="text-[10px] font-black text-slate-500 uppercase truncate block leading-none mb-1">{item.name}</span>
+                                 <span className="text-[8px] font-bold text-blue-400 uppercase tracking-tighter block">{item.unidade}</span>
+                              </div>
                               <span className="text-[11px] font-black text-slate-900">{item.pct}%</span>
                            </div>
                            <div className="h-2 w-full bg-slate-50 rounded-full overflow-hidden">
@@ -474,7 +476,7 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
             </div>
           )}
 
-          {biSubTab === 'conversao' && isMaster && (
+          {biSubTab === 'conversao' && isGestorTier && (
             <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-700">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100 relative group overflow-hidden">
@@ -659,15 +661,15 @@ const Relatorios: React.FC<RelatoriosProps> = ({ alunos, turmas, presencas, matr
         </div>
       )}
 
-      {activeTab === 'frequencia_geral' && isMaster && (
+      {activeTab === 'frequencia_geral' && isGestorTier && (
         <div className="space-y-8 animate-in fade-in duration-500">
            <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-end">
                  <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><User className="w-3.5 h-3.5" /> ESTUDANTE</label><select value={freqEstudante} onChange={e => setFreqEstudante(e.target.value)} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700"><option value="">Todos os Estudantes</option>{alunos.sort((a,b)=>a.nome.localeCompare(b.nome)).map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}</select></div>
                  <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><MapPin className="w-3.5 h-3.5" /> UNIDADE</label><select value={freqUnidade} onChange={e => { setFreqUnidade(e.target.value); setFreqTurma(''); }} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700"><option value="">Todas as Unidades</option>{unidadesUnicas.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
                  <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><GraduationCap className="w-3.5 h-3.5" /> TURMA</label><select value={freqTurma} onChange={e => setFreqTurma(e.target.value)} disabled={!freqUnidade} className={`w-full px-6 py-4 border-2 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700 transition-all ${!freqUnidade ? 'bg-slate-50 border-slate-50 text-slate-300' : 'bg-slate-50 border-slate-100'}`}><option value="">{freqUnidade ? 'Todas as Turmas' : 'Selecione Unidade'}</option>{turmasFiltradasFreq.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}</select></div>
-                 <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> INÍCIO</label><input type="date" value={freqDataInicio} onChange={e => setFreqDataInicio(e.target.value)} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700" /></div>
-                 <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> FIM</label><input type="date" value={freqDataFim} onChange={e => setFreqDataFim(e.target.value)} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700" /></div>
+                 <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> INÍCIO</label><input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700" /></div>
+                 <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> FIM</label><input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none font-bold text-slate-700" /></div>
               </div>
            </div>
            <div className="bg-white rounded-[40px] overflow-hidden shadow-sm border border-slate-100">
