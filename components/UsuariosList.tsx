@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { ShieldCheck, User, Key, ShieldAlert, BookOpen, Crown } from 'lucide-react';
+import { ShieldCheck, User, Key, ShieldAlert, BookOpen, Crown, LayoutGrid, MapPin } from 'lucide-react';
 import { Usuario } from '../types';
 
 interface UsuariosListProps {
@@ -23,6 +23,13 @@ const UsuariosList: React.FC<UsuariosListProps> = ({ usuarios }) => {
           label: 'bg-red-100 text-red-700',
           border: 'bg-red-50/50',
           icon: ShieldCheck
+        };
+      case 'Coordenador':
+        return {
+          bg: 'bg-indigo-50 text-indigo-600',
+          label: 'bg-indigo-100 text-indigo-700',
+          border: 'bg-indigo-50/50',
+          icon: LayoutGrid
         };
       case 'Regente':
         return {
@@ -71,6 +78,10 @@ const UsuariosList: React.FC<UsuariosListProps> = ({ usuarios }) => {
                 <p className="text-xs text-slate-400 font-medium mb-6 uppercase tracking-wider">Login ID: {u.login}</p>
 
                 <div className="space-y-3 pt-6 border-t border-slate-50">
+                  <div className="flex items-center gap-3 text-slate-500">
+                    <MapPin className="w-4 h-4 text-blue-500" />
+                    <span className="text-xs font-black uppercase">{u.unidade || 'Nenhuma unidade associada'}</span>
+                  </div>
                   <div className="flex items-center gap-3 text-slate-500">
                     <Key className="w-4 h-4" />
                     <span className="text-xs font-mono">Autenticação via Planilha</span>
