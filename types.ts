@@ -16,7 +16,7 @@ export interface AcaoRetencao {
 export interface Aluno {
   id: string;
   nome: string;
-  unidade: string; // AKA, BUNNY, PEQUENO LICEU, DOM PEDRINHO, OFICINA
+  unidade: string;
   dataNascimento: string;
   contato: string;
   etapa?: string;
@@ -42,6 +42,22 @@ export interface Turma {
   professor: string;
   capacidade?: number;
   valorMensal?: number;
+  identidade?: string; // Vinculo opcional por turma
+}
+
+export interface UnidadeMapping {
+  nome: string;
+  identidade: string;
+}
+
+export interface IdentidadeConfig {
+  nome: string;
+  webhookUrl: string;
+  tplLembrete: string;
+  tplFeedback: string;
+  tplRetencao: string;
+  tplMensagem: string;
+  tplReagendar: string;
 }
 
 export interface Matricula {
@@ -60,15 +76,16 @@ export interface Presenca {
   data: string;
   status: 'Presente' | 'Ausente';
   observacao?: string;
-  alarme?: string; // Coluna G: "Enviado" ou vazio
+  alarme?: string;
+  timestampInclusao?: string;
 }
 
 export interface Usuario {
   nome?: string;
   login: string;
   senha?: string;
-  unidade: string; // 'TODAS' para Master ou nome da unidade específica
-  nivel: 'Professor' | 'Gestor' | 'Regente' | 'Estagiário' | 'Gestor Master' | 'Start' | 'Coordenador';
+  unidade: string;
+  nivel: 'Professor' | 'Gestor' | 'Regente' | 'Estagiário' | 'Gestor Master' | 'Start' | 'Coordenador' | 'Gestor Administrativo';
 }
 
 export interface AulaExperimental {
@@ -86,11 +103,11 @@ export interface AulaExperimental {
   followUpSent?: boolean;
   lembreteEnviado?: boolean;
   convertido?: boolean;
-  reagendarEnviado?: boolean; // Coluna O
-  // Campos adicionais para escolaridade
+  convertidoNaPlanilha?: boolean;
+  reagendarEnviado?: boolean;
   etapa?: string;
   anoEscolar?: string;
   turmaEscolar?: string;
 }
 
-export type ViewType = 'dashboard' | 'alunos' | 'frequencia' | 'relatorios' | 'turmas' | 'usuarios' | 'preparacao' | 'experimental' | 'dados-alunos' | 'churn-risk' | 'settings' | 'financeiro';
+export type ViewType = 'dashboard' | 'alunos' | 'frequencia' | 'relatorios' | 'turmas' | 'usuarios' | 'preparacao' | 'experimental' | 'churn-risk' | 'financeiro' | 'settings' | 'dados-alunos';

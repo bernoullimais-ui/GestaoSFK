@@ -1,11 +1,16 @@
 
-# Guia Frequência B+: Configuração do Google Apps Script
+# Guia Gestão Unificada SFK & B+: Configuração do Google Apps Script
 
-Siga este guia para garantir que o aplicativo consiga ler e gravar dados corretamente na sua planilha, permitindo a edição de chamadas sem duplicar linhas e mantendo as colunas alinhadas.
+Este script permite que o aplicativo leia dados de alunos, turmas, frequências e a nova associação de **Unidades x Identidades**.
 
-## 1. Código Completo do Script (Copie e Cole)
+## 1. Instruções de Instalação
 
-Substitua todo o conteúdo no seu Editor de Script do Google pelo código abaixo:
+1. Na sua Planilha Google, vá em **Extensões** > **Apps Script**.
+2. Substitua o código existente pelo código abaixo.
+3. Clique em **Implantar** > **Gerenciar implantações** > **Editar** (ícone de lápis) > **Nova Versão**.
+4. Certifique-se de que o acesso continua como "Qualquer pessoa".
+
+## 2. Código do Script (Versão 3.1 com Auditoria de Frequência)
 
 ```javascript
 function doGet(e) {
@@ -22,12 +27,14 @@ function doGet(e) {
     return null;
   }
 
+  // Localização inteligente das abas
   var sheetBase = findSheetSmart(["base", "aluno", "estudante"]) || sheets[0];
   var sheetTurmas = findSheetSmart(["turma", "curso", "horario"]);
   var sheetUsuarios = findSheetSmart(["usu", "oper", "profe", "login", "nivel"]);
   var sheetExperimental = findSheetSmart(["experimental", "leads", "aula exp"]);
   var sheetFreq = findSheetSmart(["frequencia", "chamada", "presenca"]);
   var sheetConfig = findSheetSmart(["config", "parametros", "ajustes", "setup"]);
+  var sheetUnidades = findSheetSmart(["unidade", "escolas", "unid"]); // Nova Aba
 
   var result = {
     base: getSheetDataWithRecovery(sheetBase),
@@ -36,6 +43,7 @@ function doGet(e) {
     experimental: getSheetDataWithRecovery(sheetExperimental),
     frequencia: getSheetDataWithRecovery(sheetFreq),
     configuracoes: getSheetDataWithRecovery(sheetConfig),
+    unidadesMapping: getSheetDataWithRecovery(sheetUnidades), // Adicionado ao retorno
     status: "OK",
     timestamp: new Date().getTime()
   };
@@ -57,8 +65,7 @@ function doPost(e) {
       var headers = rows[0].map(function(h) { return normalizeText(h).replace(/[^a-z0-9]/g, ""); });
       
       var colEstudante = headers.indexOf("estudante");
-      var colCurso = headers.indexOf("modalidade");
-      if (colCurso === -1) colCurso = headers.indexOf("curso");
+      var colCurso = headers.indexOf("modalidade") === -1 ? headers.indexOf("curso") : headers.indexOf("modalidade");
       if (colCurso === -1) colCurso = headers.indexOf("turma");
       
       var colEnviado = headers.indexOf("enviado");
@@ -66,14 +73,11 @@ function doPost(e) {
       var colStatus = headers.indexOf("status");
       var colConversao = headers.indexOf("conversao");
       var colLembrete = headers.indexOf("lembrete");
-      var colReagendar = headers.indexOf("reagendar"); // Esperado na Coluna O
+      var colReagendar = headers.indexOf("reagendar");
       
       for (var i = 1; i < rows.length; i++) {
-        var rowEstudante = normalizeText(rows[i][colEstudante]);
-        var rowCurso = normalizeText(rows[i][colCurso]);
-        
-        if (rowEstudante === normalizeText(data.estudante) && 
-            (rowCurso === normalizeText(data.curso) || !data.curso)) {
+        if (normalizeText(rows[i][colEstudante]) === normalizeText(data.estudante) && 
+            (normalizeText(rows[i][colCurso]) === normalizeText(data.curso) || !data.curso)) {
           
           if (colEnviado !== -1 && data.enviado !== undefined) sheet.getRange(i + 1, colEnviado + 1).setValue(data.enviado);
           if (colFeedback !== -1 && data.feedback !== undefined) sheet.getRange(i + 1, colFeedback + 1).setValue(data.feedback);
@@ -90,32 +94,25 @@ function doPost(e) {
       var sheet = ss.getSheetByName("FREQUENCIA") || findSheetSmart(["frequencia", "chamada", "presenca"]);
       if (!sheet) {
         sheet = ss.insertSheet("FREQUENCIA");
-        sheet.appendRow(["ESTUDANTE", "UNIDADE", "TURMA", "DATA", "STATUS", "OBSERVAÇÃO", "ALARME"]);
+        sheet.appendRow(["ESTUDANTE", "UNIDADE", "TURMA", "DATA", "STATUS", "OBSERVAÇÃO", "ALARME", "DATA INCLUSÃO"]);
       }
       
       var rows = sheet.getDataRange().getValues();
-      var colAluno = 0;   
-      var colUnidade = 1; 
-      var colTurma = 2;   
-      var colData = 3;    
-      var colStatus = 4;  
-      var colObs = 5;     
-      var colAlarme = 6;  
+      // Mapeamento de colunas: A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7
+      var colAluno = 0, colUnidade = 1, colTurma = 2, colData = 3, colStatus = 4, colObs = 5, colAlarme = 6, colTimestamp = 7;  
 
       if (Array.isArray(data)) {
         data.forEach(function(p) {
           var foundIndex = -1;
+          var pAluno = p.aluno || p.alunoId;
+          var pTurma = p.turma || p.turmaId;
+
           for (var i = 1; i < rows.length; i++) {
             var rowData = rows[i][colData];
-            var formattedRowData = "";
-            if (rowData instanceof Date) {
-              formattedRowData = Utilities.formatDate(rowData, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
-            } else {
-              formattedRowData = rowData.toString();
-            }
+            var formattedRowData = rowData instanceof Date ? Utilities.formatDate(rowData, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd") : rowData.toString();
 
-            if (normalizeText(rows[i][colAluno]) === normalizeText(p.aluno) && 
-                normalizeText(rows[i][colTurma]) === normalizeText(p.turma) && 
+            if (normalizeText(rows[i][colAluno]) === normalizeText(pAluno) && 
+                normalizeText(rows[i][colTurma]) === normalizeText(pTurma) && 
                 formattedRowData === p.data) {
               foundIndex = i + 1;
               break;
@@ -127,8 +124,9 @@ function doPost(e) {
             sheet.getRange(foundIndex, colObs + 1).setValue(p.observacao || "");
             sheet.getRange(foundIndex, colUnidade + 1).setValue(p.unidade);
             if (p.alarme) sheet.getRange(foundIndex, colAlarme + 1).setValue(p.alarme);
+            sheet.getRange(foundIndex, colTimestamp + 1).setValue(p.timestampInclusao || "");
           } else {
-            sheet.appendRow([p.aluno, p.unidade, p.turma, p.data, p.status, p.observacao || "", p.alarme || ""]);
+            sheet.appendRow([pAluno, p.unidade, pTurma, p.data, p.status, p.observacao || "", p.alarme || "", p.timestampInclusao || ""]);
           }
         });
       }

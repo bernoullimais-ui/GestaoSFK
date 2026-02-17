@@ -24,7 +24,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, usuarios }) => {
     <div className="min-h-screen bg-[#1e1b4b] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-500">
         <div className="p-10">
-          <h2 className="text-3xl font-black text-indigo-950 text-center mb-1 tracking-tight mt-10">Gestão SFK</h2>
+          <h2 className="text-3xl font-black text-indigo-950 text-center mb-1 tracking-tight mt-10">Gestão SFK 3.0</h2>
           <p className="text-slate-400 text-center mb-10 font-bold uppercase text-[10px] tracking-widest">Controle Profissional de Unidades</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

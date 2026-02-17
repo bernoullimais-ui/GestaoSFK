@@ -15,6 +15,17 @@ import {
 } from 'lucide-react';
 import { Aluno, Turma, Matricula, Usuario } from '../types';
 
+// Função padronizada para cores por unidade conforme identidade visual SFK
+const getUnidadeStyle = (unidade: string) => {
+  const u = String(unidade || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (u.includes('AKA')) return 'bg-blue-100 text-blue-700 border-blue-200';
+  if (u.includes('BUNNY')) return 'bg-purple-100 text-purple-700 border-purple-200';
+  if (u.includes('LICEU')) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  if (u.includes('PEDRINHO')) return 'bg-amber-100 text-amber-700 border-amber-200';
+  if (u.includes('OFICINA')) return 'bg-rose-100 text-rose-700 border-rose-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+};
+
 interface PreparacaoTurmasProps {
   alunos: Aluno[];
   turmas: Turma[];
@@ -26,13 +37,38 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
   const normalize = (t: string) => 
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
-  // Normalização rigorosa que remove espaços e hifens para comparação de igualdade técnica
   const normalizeStrict = (t: string) => 
     normalize(t).replace(/[\s-]/g, '');
 
   const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start' || normalize(currentUser.unidade) === 'todas';
+  const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
   const isRegente = currentUser.nivel === 'Regente';
+  const profNameNorm = normalize(currentUser.nome || currentUser.login);
   
+  const userUnits = useMemo(() => 
+    normalize(currentUser.unidade).split(',').map(u => u.trim()).filter(Boolean), 
+    [currentUser.unidade]
+  );
+
+  // Turmas permitidas para o usuário (por Professor ou por Unidade)
+  const myTurmasIds = useMemo(() => {
+    if (isMaster) return new Set(turmas.map(t => t.id));
+    
+    return new Set(turmas.filter(t => {
+      const tUnitNorm = normalize(t.unidade);
+      const hasUnitAccess = userUnits.some(u => tUnitNorm.includes(u) || u.includes(tUnitNorm));
+      
+      if (isProfessor) {
+        const tProf = normalize(t.professor).replace(/^prof\.?\s*/i, '');
+        const profMatch = tProf.includes(profNameNorm) || profNameNorm.includes(tProf);
+        return profMatch && hasUnitAccess;
+      }
+      
+      // Gestor / Coordenador / Regente
+      return hasUnitAccess;
+    }).map(t => t.id));
+  }, [turmas, profNameNorm, isMaster, isProfessor, userUnits]);
+
   const idHoje = useMemo(() => {
     const d = new Date().getDay();
     if (d === 0 || d === 6) return 'seg';
@@ -46,13 +82,11 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     if (!etapa) return "";
     
     let e = etapa.toUpperCase();
-    // Normalização pedagógica
     if (e === 'EDUCACAO INFANTIL') e = 'EI';
     else if (e === 'ENSINO FUNDAMENTAL') e = 'EF';
     else if (e === 'ENSINO MEDIO') e = 'EM';
     
     const hasTurma = turmaEsc && normalize(turmaEsc) !== 'nao sei' && normalize(turmaEsc) !== 'não sei' && turmaEsc !== '';
-    // Usamos ESPAÇO como separador para bater com o padrão de nome de usuário (ex: "EI-G2 A")
     return hasTurma ? `${e} ${turmaEsc}` : e;
   };
 
@@ -78,29 +112,31 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
     return 1000;
   };
 
+  // Siglas vinculadas aos alunos permitidos
   const siglasExistentes = useMemo(() => {
     const set = new Set<string>();
-    const unidadestr = currentUser.unidade || '';
-    const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
     const userNameStrict = normalizeStrict(currentUser.nome || '');
 
     alunos.forEach(aluno => {
       if (normalize(aluno.statusMatricula) === 'cancelado') return;
       
-      // Filtro de Unidade
-      if (!isMaster && userUnits.length > 0) {
-        const alunoUnit = normalize(aluno.unidade);
-        const matchUnit = userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit));
-        if (!matchUnit) return;
+      // Restrição de Unidade para não-Master
+      if (!isMaster) {
+        const studentUnitNorm = normalize(aluno.unidade);
+        const hasUnitAccess = userUnits.some(u => studentUnitNorm.includes(u) || u.includes(studentUnitNorm));
+        if (!hasUnitAccess) return;
+      }
+
+      // Restrição de Professor (deve estar matriculado em uma turma do professor)
+      if (isProfessor) {
+        const isMeuAluno = matriculas.some(m => m.alunoId === aluno.id && myTurmasIds.has(m.turmaId));
+        if (!isMeuAluno) return;
       }
 
       const sigla = formatEscolaridade(aluno);
       if (sigla) {
         if (isRegente) {
-          // Comparação rigorosa (remove hífens e espaços de ambos os lados)
-          if (normalizeStrict(sigla) === userNameStrict) {
-            set.add(sigla);
-          }
+          if (normalizeStrict(sigla) === userNameStrict) set.add(sigla);
         } else {
           set.add(sigla);
         }
@@ -113,7 +149,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
       if (weightA !== weightB) return weightA - weightB;
       return a.localeCompare(b, undefined, { numeric: true });
     });
-  }, [alunos, currentUser, isMaster, isRegente]);
+  }, [alunos, matriculas, myTurmasIds, isProfessor, isRegente, isMaster, userUnits, currentUser.nome]);
 
   const [filtroSigla, setFiltroSigla] = useState('');
   const [filtroDia, setFiltroDia] = useState(idHoje);
@@ -121,15 +157,10 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
   useEffect(() => {
     if (isRegente && siglasExistentes.length > 0) {
       setFiltroSigla(siglasExistentes[0]);
-    } else if (isRegente && siglasExistentes.length === 0) {
-      setFiltroSigla('');
     }
   }, [isRegente, siglasExistentes]);
 
   const studentsToPrepare = useMemo(() => {
-    const unidadestr = currentUser.unidade || '';
-    const userUnits = normalize(unidadestr).split(',').map(u => u.trim()).filter(Boolean);
-
     const daySynonyms: Record<string, string[]> = {
       'seg': ['seg', '2a', '2ª', 'segunda'],
       'ter': ['ter', '3a', '3ª', 'terça'],
@@ -140,62 +171,48 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
 
     const targetSynonyms = daySynonyms[filtroDia] || [filtroDia];
 
-    const filteredAlunos = alunos.filter(a => {
+    return alunos.filter(a => {
       if (normalize(a.statusMatricula) === 'cancelado') return false;
-      if (!isMaster && userUnits.length > 0) {
-        const alunoUnit = normalize(a.unidade);
-        if (!userUnits.some(u => alunoUnit.includes(u) || u.includes(alunoUnit))) return false;
-      }
       
+      // Restrição de Unidade para não-Master (Gestores, etc)
+      if (!isMaster) {
+        const studentUnitNorm = normalize(a.unidade);
+        const hasUnitAccess = userUnits.some(u => studentUnitNorm.includes(u) || u.includes(studentUnitNorm));
+        if (!hasUnitAccess) return false;
+      }
+
+      // Regra do Professor
+      if (isProfessor) {
+        const isMeuAluno = matriculas.some(m => m.alunoId === a.id && myTurmasIds.has(m.turmaId));
+        if (!isMeuAluno) return false;
+      }
+
       const siglaAluno = formatEscolaridade(a);
-      if (isRegente) {
-        // Regente só vê o que bate com o filtro (que já está travado na sigla dele)
-        if (!filtroSigla || normalizeStrict(siglaAluno) !== normalizeStrict(filtroSigla)) return false;
-      } else if (filtroSigla) {
-        if (normalizeStrict(siglaAluno) !== normalizeStrict(filtroSigla)) return false;
-      }
+      if (filtroSigla && normalizeStrict(siglaAluno) !== normalizeStrict(filtroSigla)) return false;
       
-      return true;
-    });
+      // Verificar se tem aula no dia selecionado nas turmas acessíveis
+      const mats = matriculas.filter(m => m.alunoId === a.id && myTurmasIds.has(m.turmaId));
+      const aulasDoDia = mats.some(m => {
+        const t = turmas.find(turma => turma.id === m.turmaId || normalize(m.turmaId).includes(normalize(turma.nome)));
+        if (!t) return false;
+        const horarioNorm = normalize(t.horario);
+        return targetSynonyms.some(syn => horarioNorm.includes(syn));
+      });
 
-    const result: any[] = [];
-    for (const a of filteredAlunos) {
-      const mats = matriculas.filter(m => m.alunoId === a.id);
-      const studentClassesOnDay: Turma[] = [];
+      return aulasDoDia;
+    }).map(a => {
+      const mats = matriculas.filter(m => m.alunoId === a.id && myTurmasIds.has(m.turmaId));
+      const classes = mats.map(m => turmas.find(t => t.id === m.turmaId || normalize(m.turmaId).includes(normalize(t.nome))))
+        .filter(t => t && targetSynonyms.some(syn => normalize(t.horario).includes(syn))) as Turma[];
 
-      for (const m of mats) {
-        const t = turmas.find(turma => {
-          const tId = normalize(turma.id);
-          const tNome = normalize(turma.nome);
-          const tUnidade = normalize(turma.unidade);
-          const mTurmaId = normalize(m.turmaId);
-          return normalize(m.unidade) === tUnidade && (tId === mTurmaId || mTurmaId.includes(tNome) || tNome.includes(mTurmaId));
-        });
-
-        if (t) {
-          const horarioNorm = normalize(t.horario);
-          if (targetSynonyms.some(syn => horarioNorm.includes(syn))) {
-            studentClassesOnDay.push(t);
-          }
-        }
-      }
-
-      if (studentClassesOnDay.length > 0) {
-        result.push({ 
-          aluno: a, 
-          sigla: formatEscolaridade(a),
-          turmas: studentClassesOnDay.sort((x, y) => x.horario.localeCompare(y.horario)) 
-        });
-      }
-    }
-
-    return result.sort((x, y) => {
+      return { aluno: a, sigla: formatEscolaridade(a), turmas: classes.sort((x, y) => x.horario.localeCompare(y.horario)) };
+    }).sort((x, y) => {
       const weightX = getSchoolWeight(x.sigla);
       const weightY = getSchoolWeight(y.sigla);
       if (weightX !== weightY) return weightX - weightY;
       return x.aluno.nome.localeCompare(y.aluno.nome);
     });
-  }, [alunos, matriculas, turmas, filtroSigla, filtroDia, isMaster, currentUser.unidade, isRegente]);
+  }, [alunos, matriculas, turmas, filtroSigla, filtroDia, isProfessor, isMaster, userUnits, myTurmasIds]);
 
   const diasSemana = [
     { id: 'seg', label: 'Segunda-feira' },
@@ -212,12 +229,10 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
         <div className="space-y-1">
           <h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase leading-none">Preparação</h2>
-          <p className="text-slate-500 font-medium text-sm">Listagem nominal de estudantes conforme escolaridade e grade horária.</p>
+          <p className="text-slate-500 font-medium text-sm">
+            {isProfessor ? 'Listagem dos meus alunos para saída escolar.' : `Listagem de estudantes - Unidade: ${isMaster ? 'Global' : currentUser.unidade}`}
+          </p>
         </div>
-        <button className="bg-amber-50 text-amber-700 px-6 py-3 rounded-2xl flex items-center gap-3 border border-amber-100 shadow-sm hover:bg-amber-100 transition-all font-black text-[10px] uppercase tracking-widest self-start">
-          <ClipboardCheck className="w-5 h-5 text-amber-600" />
-          Rotina de Saída
-        </button>
       </div>
 
       <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
@@ -236,9 +251,8 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
                   isRegente ? 'bg-slate-50 border-slate-50 text-indigo-600' : 'bg-slate-50 border-slate-100 text-slate-700 focus:border-indigo-600'
                 } ${filtroSigla ? 'border-indigo-600 ring-4 ring-indigo-50' : ''}`}
               >
-                {!isRegente && <option value="">🌟 EXIBIR TODOS OS MEUS ESTUDANTES</option>}
+                {!isRegente && <option value="">🌟 EXIBIR TODAS AS MINHAS SIGLAS</option>}
                 {siglasExistentes.map(s => <option key={s} value={s}>{s}</option>)}
-                {isRegente && siglasExistentes.length === 0 && <option value="">Nenhuma sigla vinculada ao seu nome</option>}
               </select>
               {!isRegente && <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />}
               {isRegente && <Lock className="absolute right-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />}
@@ -247,7 +261,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
 
           <div>
             <label className="block text-[10px] font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">
-              DIA DA SEMANA (GRADE DO DIA)
+              DIA DA SEMANA
             </label>
             <div className="relative group">
               <Calendar className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-400" />
@@ -269,7 +283,7 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
           <div>
             <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-2">Estudantes Localizados</h3>
             <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-              Listagem nominal para {labelDiaAtivo}
+              {labelDiaAtivo}
             </p>
           </div>
           <div className="bg-indigo-600 px-5 py-2.5 rounded-2xl border border-indigo-500 shadow-lg flex items-center gap-3">
@@ -277,43 +291,35 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
           </div>
         </div>
 
-        <div className="px-10 py-4 border-b border-slate-100 bg-slate-50/30 grid grid-cols-12 gap-6">
-          <div className="col-span-7 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estudante</div>
-          <div className="col-span-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Atividades em {labelDiaAtivo}</div>
-        </div>
-
         <div className="flex-1">
           {studentsToPrepare.length > 0 ? (
             <div className="divide-y divide-slate-100">
-              {studentsToPrepare.map((item, idx) => {
-                const sigla = item.sigla;
-                return (
-                  <div key={idx} className="px-10 py-8 grid grid-cols-12 gap-6 items-center hover:bg-slate-50/50 transition-colors">
-                    <div className="col-span-7 space-y-2">
-                      <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter leading-none">{item.aluno.nome}</h4>
-                      <div className="flex items-center gap-3">
-                         <span className="bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter">
-                           {sigla || 'S/S'}
-                         </span>
-                         <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                           {item.aluno.unidade}
-                         </span>
-                      </div>
-                    </div>
-                    <div className="col-span-5 flex flex-wrap gap-3">
-                      {item.turmas.map((t: Turma, tIdx: number) => (
-                        <div key={tIdx} className="bg-emerald-50 border border-emerald-100 px-5 py-3 rounded-2xl flex items-center gap-4 group transition-all hover:bg-emerald-100">
-                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200" />
-                          <div className="flex flex-col">
-                            <span className="text-sm font-black text-emerald-900 uppercase leading-none mb-1">{t.nome}</span>
-                            <span className="text-[9px] font-black text-emerald-600/70 uppercase tracking-widest leading-none">{t.horario}</span>
-                          </div>
-                        </div>
-                      ))}
+              {studentsToPrepare.map((item, idx) => (
+                <div key={idx} className="px-10 py-8 grid grid-cols-12 gap-6 items-center hover:bg-slate-50/50 transition-colors">
+                  <div className="col-span-7 space-y-2">
+                    <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter leading-none">{item.aluno.nome}</h4>
+                    <div className="flex items-center gap-3">
+                       <span className="bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter">
+                         {item.sigla || 'S/S'}
+                       </span>
+                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shadow-sm ${getUnidadeStyle(item.aluno.unidade)}`}>
+                         {item.aluno.unidade}
+                       </span>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="col-span-5 flex flex-wrap gap-3">
+                    {item.turmas.map((t: Turma, tIdx: number) => (
+                      <div key={tIdx} className="bg-emerald-50 border border-emerald-100 px-5 py-3 rounded-2xl flex items-center gap-4">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                        <div className="flex flex-col">
+                          <span className="text-sm font-black text-emerald-900 uppercase leading-none mb-1">{t.nome}</span>
+                          <span className="text-[9px] font-black text-emerald-600/70 uppercase tracking-widest leading-none">{t.horario}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="py-40 text-center flex flex-col items-center justify-center space-y-6">
@@ -322,11 +328,8 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
               </div>
               <div className="max-w-md mx-auto">
                 <h4 className="text-2xl font-black text-slate-300 uppercase tracking-tighter mb-2">Nenhum estudante localizado</h4>
-                <p className="text-slate-300 text-[11px] font-black uppercase tracking-widest px-10">
-                  {isRegente && siglasExistentes.length === 0 
-                    ? `Nenhuma sigla encontrada vinculada ao nome "${currentUser.nome}"`
-                    : "Não localizamos registros com aulas para este dia nesta sigla."
-                  }
+                <p className="text-slate-300 text-[11px] font-black uppercase tracking-widest px-10 text-center">
+                  Não localizamos aulas nas turmas permitidas para este dia.
                 </p>
               </div>
             </div>
