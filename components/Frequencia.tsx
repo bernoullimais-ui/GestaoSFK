@@ -322,7 +322,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                 <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:bg-slate-50/50 transition-colors">
                   <div className="flex items-center gap-5">
                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-2xl transition-all duration-300 shadow-sm ${
-                      markedPresencas[aluno.id] === 'Presente' ? 'bg-blue-600 text-white' : 
+                      markedPresencas[aluno.id] === 'Presente' ? 'bg-emerald-600 text-white' : 
                       markedPresencas[aluno.id] === 'Ausente' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-400'
                     }`}>
                       {aluno.nome.charAt(0)}
@@ -346,7 +346,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
                     <button 
                       onClick={() => handleTogglePresenca(aluno.id, 'Presente')}
                       className={`flex-1 sm:flex-none px-8 py-4 rounded-2xl border-2 font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm uppercase tracking-widest ${
-                        markedPresencas[aluno.id] === 'Presente' ? 'bg-blue-600 border-blue-600 text-white shadow-blue-600/20' : 'bg-white border-slate-100 text-slate-300'
+                        markedPresencas[aluno.id] === 'Presente' ? 'bg-emerald-600 border-emerald-600 text-white shadow-emerald-600/20' : 'bg-white border-slate-100 text-slate-300'
                       }`}
                     >
                       <CheckCircle2 className="w-5 h-5" /> PRESENTE

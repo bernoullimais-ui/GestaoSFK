@@ -189,8 +189,9 @@ const App: React.FC = () => {
             unidade: unidadeRaw,
             dataNascimento: parseSheetDate(item.nascimento || item.datanascimento),
             contato: cleanPhone(item.whatsapp1 || item.whatsapp2),
-            etapa: item.estagioanoescolar || item.etapa || "",
-            turmaEscolar: (item.turmaescolar || "").toString().replace(/turma\s*/gi, '').trim(),
+            etapa: item.estagioanoescolar || item.etapa || item.etapaanoescolar || "",
+            anoEscolar: item.anoescolar || item.ano || item.serie || item.anoserie || "",
+            turmaEscolar: (item.turmaescolar || item.turma || "").toString().replace(/turma\s*/gi, '').trim(),
             dataMatricula: dMat,
             responsavel1: item.responsavel1 || "",
             whatsapp1: cleanPhone(item.whatsapp1),
@@ -199,11 +200,27 @@ const App: React.FC = () => {
             email: item.email || "",
             statusMatricula: 'Cancelado',
             cursosCanceladosDetalhes: [],
-            isLead: statusRaw.includes('lead')
+            isLead: statusRaw.includes('lead'),
+            plano: item.plano || "" // Captura da Coluna D
           });
         }
 
         const student = studentsMap.get(studentKey)!;
+        
+        const isMoreRecent = !student.dataMatricula || (dMat && dMat >= student.dataMatricula);
+        if (isMoreRecent) {
+          student.responsavel1 = item.responsavel1 || student.responsavel1;
+          student.whatsapp1 = cleanPhone(item.whatsapp1) || student.whatsapp1;
+          student.responsavel2 = item.responsavel2 || student.responsavel2;
+          student.whatsapp2 = cleanPhone(item.whatsapp2) || student.whatsapp2;
+          student.email = item.email || student.email;
+          student.etapa = item.estagioanoescolar || item.etapa || item.etapaanoescolar || student.etapa;
+          student.anoEscolar = item.anoescolar || item.ano || item.serie || item.anoserie || student.anoEscolar;
+          student.turmaEscolar = (item.turmaescolar || item.turma || "").toString().replace(/turma\s*/gi, '').trim() || student.turmaEscolar;
+          student.dataMatricula = dMat || student.dataMatricula;
+          student.plano = item.plano || student.plano; // Atualização persistente
+        }
+
         const isRowActive = (statusRaw === 'ativo' || statusRaw === 'atv') && !dCanc;
         
         if (isRowActive) {
@@ -256,8 +273,9 @@ const App: React.FC = () => {
           convertido: jaMatriculado || String(e.conversao || '').toLowerCase() === 'true',
           convertidoNaPlanilha: String(e.conversao || '').toLowerCase() === 'true',
           reagendarEnviado: String(e.reagendar || "").toLowerCase() === 'true',
-          etapa: e.etapa || "",
-          anoEscolar: e.anoescolar || e.ano || "",
+          // Mapeamento dinâmico reforçado com 'estagioanoescolar'
+          etapa: e.etapa || e.escolaridade || e.etapaoaescolar || e.etapaanoescolar || e.estagioanoescolar || "",
+          anoEscolar: e.anoescolar || e.anoserie || e.ano || e.serie || "",
           turmaEscolar: e.turmaescolar || e.turma || ""
         };
       }));

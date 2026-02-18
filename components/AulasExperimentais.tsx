@@ -23,10 +23,22 @@ import {
 } from 'lucide-react';
 import { AulaExperimental, Usuario, Turma, Aluno, IdentidadeConfig, UnidadeMapping } from '../types';
 
-const getAvatarColor = (name: string) => {
-  const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-indigo-500', 'bg-purple-500', 'bg-rose-500', 'bg-amber-500'];
-  const index = name.charCodeAt(0) % colors.length;
-  return colors[index];
+// Nova função de cores do avatar baseada em regras de negócio para Experimentais
+const getExperimentalAvatarColor = (exp: AulaExperimental, currentStatus: string | undefined) => {
+  // 1. Verde esmeralda - Caso tenha o selo matriculado (conversão matrícula)
+  if (exp.convertido) return 'bg-emerald-500';
+  
+  // 3. Vermelho - caso no botão de ausencia esteja ativo
+  if (currentStatus === 'Ausente') return 'bg-rose-500';
+  
+  // 4. Roxo (purple-500) - Caso tenha participado da aula, mas não tenha convertido a matrícula
+  if (currentStatus === 'Presente') return 'bg-purple-500';
+  
+  // 2. Amber-500 - Caso o Lembrete ainda não tenha sido enviado e não tenha o selo Matriculado
+  if (!exp.lembreteEnviado) return 'bg-amber-500';
+  
+  // Default - Caso já tenha enviado lembrete mas ainda esteja pendente de aula
+  return 'bg-slate-400';
 };
 
 const getUnidadeBadgeStyle = (unidade: string) => {
@@ -69,23 +81,35 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start';
   const isGestorAdmin = currentUser.nivel === 'Gestor Administrativo';
   const isProfessor = currentUser.nivel === 'Professor' || currentUser.nivel === 'Estagiário';
+  const isRegente = currentUser.nivel === 'Regente';
   const canSendMessage = isMaster || isGestorAdmin;
 
   const formatEscolaridade = (exp: AulaExperimental) => {
-    const etapa = (exp.etapa || '').toUpperCase().trim();
-    const ano = (exp.anoEscolar || '').trim();
-    const turma = (exp.turmaEscolar || '').toUpperCase().trim();
+    // Tenta pegar a etapa da coluna E (estagioanoescolar) e a turma da coluna F (turmaescolar)
+    let etapa = (exp.etapa || (exp as any).estagioanoescolar || '').trim();
+    let turma = (exp.turmaEscolar || (exp as any).turma || '').toString().replace(/turma\s*/gi, '').trim();
+
     if (!etapa) return "";
+
+    // Normaliza a etapa para as siglas padrão
+    etapa = etapa.toUpperCase()
+      .replace('EDUCACAO INFANTIL', 'EI')
+      .replace('ENSINO FUNDAMENTAL', 'EF')
+      .replace('ENSINO MEDIO', 'EM');
+
+    let result = etapa;
     
-    let e = etapa;
-    if (e.includes('INFANTIL') || e.includes('EDUCACAO INFANTIL')) e = 'EI';
-    else if (e.includes('FUNDAMENTAL')) e = 'EF';
-    else if (e.includes('MEDIO')) e = 'EM';
+    // Lista de valores que não devem ser exibidos como turma
+    const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
+    if (turma && !invalidClasses.includes(turma.toUpperCase())) {
+      // Só concatena se a etapa já não terminar com a letra da turma (prevenção de duplicidade)
+      const lastChar = etapa.split(' ').pop();
+      if (lastChar !== turma.toUpperCase()) {
+        result = `${etapa} ${turma.toUpperCase()}`;
+      }
+    }
     
-    let res = e;
-    if (ano) res += ` ${ano}`;
-    if (turma && turma !== 'NÃO SEI' && turma !== '' && turma !== 'NAO SEI') res += ` ${turma}`;
-    return res;
+    return result;
   };
 
   const getIdentidadeForExp = (exp: AulaExperimental): IdentidadeConfig => {
@@ -102,19 +126,52 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const filteredExperimentais = useMemo(() => {
     const userUnits = normalizeStr(currentUser.unidade).split(',').map(u => u.trim()).filter(Boolean);
     const profNameNorm = normalizeStr(currentUser.nome || currentUser.login);
+    const regenteNameNorm = normalizeStr(currentUser.nome || '');
+
+    const getEscolaridadeWeight = (exp: AulaExperimental) => {
+      const esc = formatEscolaridade(exp).toUpperCase();
+      if (esc.startsWith('EI')) return 1;
+      if (esc.startsWith('EF')) return 2;
+      if (esc.startsWith('EM')) return 3;
+      return 4;
+    };
+
     return experimentais.filter(exp => {
-      if (!isMaster) {
+      // Regra 1: Se for Regente, filtra EXCLUSIVAMENTE por coincidência de escolaridade formatada com o nome do usuário
+      if (isRegente) {
+        const escolaridadeFormatada = formatEscolaridade(exp);
+        if (normalizeStr(escolaridadeFormatada) !== regenteNameNorm) return false;
+      } 
+      // Regra 2: Se não for Master, aplica filtros de Unidade e Professor
+      else if (!isMaster) {
         if (isProfessor) {
           const belongsToMe = turmas.some(t => {
             const tProf = normalizeStr(t.professor).replace(/^prof\.?\s*/i, '');
             return (tProf.includes(profNameNorm) || profNameNorm.includes(tProf)) && normalizeStr(t.nome).includes(normalizeStr(exp.curso)) && normalizeStr(t.unidade) === normalizeStr(exp.unidade);
           });
           if (!belongsToMe) return false;
-        } else if (userUnits.length > 0 && !userUnits.some(u => normalizeStr(exp.unidade).includes(u))) return false;
+        } else if (userUnits.length > 0 && !userUnits.some(u => normalizeStr(exp.unidade).includes(u))) {
+          return false;
+        }
       }
+      
+      // Regra de data (comum a todos)
       return !selectedDate || String(exp.aula || '').split(' ')[0] === selectedDate;
-    }).sort((a, b) => a.estudante.localeCompare(b.estudante));
-  }, [experimentais, selectedDate, currentUser, isProfessor, isMaster, turmas]);
+    }).sort((a, b) => {
+      // 1. Ordenação por escolaridade (EI -> EF -> EM)
+      const weightA = getEscolaridadeWeight(a);
+      const weightB = getEscolaridadeWeight(b);
+      if (weightA !== weightB) return weightA - weightB;
+
+      // 2. Dentro da mesma categoria, ordena pela string formatada (G2, G3, 1º ano, etc)
+      const escA = formatEscolaridade(a);
+      const escB = formatEscolaridade(b);
+      if (escA !== escB) return escA.localeCompare(escB, undefined, { numeric: true });
+
+      // 3. Fallback: Ordenação por nome
+      return a.estudante.localeCompare(b.estudante);
+    });
+  }, [experimentais, selectedDate, currentUser, isProfessor, isMaster, isRegente, turmas]);
 
   const openComposeModal = (exp: AulaExperimental, isLembrete: boolean = false) => {
     if (!canSendMessage) return;
@@ -181,7 +238,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
         <div className="divide-y divide-slate-50">
           {filteredExperimentais.length > 0 ? filteredExperimentais.map(exp => {
             const currentStatus = localChanges[exp.id]?.status || exp.status;
-            const avatarColor = getAvatarColor(exp.estudante);
+            const avatarColor = getExperimentalAvatarColor(exp, currentStatus);
             const unitBadge = getUnidadeBadgeStyle(exp.unidade);
             const escolaridade = formatEscolaridade(exp);
 
@@ -190,7 +247,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                 <div className="p-10 flex flex-col xl:flex-row xl:items-center justify-between gap-8">
                   {/* Info Estudante */}
                   <div className="flex items-center gap-8 flex-1">
-                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-lg shrink-0 ${avatarColor}`}>
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-lg shrink-0 transition-colors duration-500 ${avatarColor}`}>
                       {exp.estudante.charAt(0)}
                     </div>
                     <div className="space-y-3 min-w-0">
@@ -206,6 +263,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                         <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 shadow-sm ${unitBadge}`}>
                           <MapPin className="w-3 h-3" /> {exp.unidade}
                         </span>
+                        {/* Selo de Escolaridade IMEDIATAMENTE após a Unidade */}
                         {escolaridade && (
                           <span className="px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 shadow-sm">
                             <GraduationCap className="w-3 h-3" /> {escolaridade}
@@ -234,8 +292,8 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       onClick={() => isProfessor && setLocalChanges(prev => ({ ...prev, [exp.id]: { ...prev[exp.id], status: 'Presente' }}))} 
                       className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all ${
                         currentStatus === 'Presente' 
-                          ? 'bg-blue-600 border-blue-600 text-white shadow-lg' 
-                          : 'bg-white border-slate-100 text-slate-300 hover:border-blue-200'
+                          ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg' 
+                          : 'bg-white border-slate-100 text-slate-300 hover:border-emerald-200'
                       }`}
                     >
                       <CheckCircle2 className="w-6 h-6" />
@@ -302,7 +360,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                         <button 
                           onClick={() => openComposeModal(exp)} 
                           disabled={exp.reagendarEnviado || !canSendMessage}
-                          className="bg-amber-500 text-white py-6 rounded-[24px] font-black text-sm uppercase flex items-center justify-center gap-4 shadow-xl hover:bg-amber-600 transition-all disabled:opacity-50"
+                          className="bg-amber-50 text-white py-6 rounded-[24px] font-black text-sm uppercase flex items-center justify-center gap-4 shadow-xl hover:bg-amber-600 transition-all disabled:opacity-50"
                         >
                           <RotateCcw className="w-6 h-6" /> Propor Reagendamento
                         </button>

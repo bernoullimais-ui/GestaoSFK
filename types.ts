@@ -32,6 +32,7 @@ export interface Aluno {
   dataCancelamento?: string;
   cursosCanceladosDetalhes?: CursoCancelado[];
   isLead?: boolean;
+  plano?: string; // Campo para Column D (Plano) da aba Base
 }
 
 export interface Turma {

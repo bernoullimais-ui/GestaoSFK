@@ -12,7 +12,11 @@ import {
   ChevronUp, 
   Search,
   Filter,
-  Check
+  Check,
+  Zap,
+  GraduationCap,
+  BookOpen,
+  UserMinus
 } from 'lucide-react';
 import { Aluno, Turma, Matricula } from '../types';
 
@@ -33,24 +37,16 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
   });
   const [filtroUnidade, setFiltroUnidade] = useState('');
   const [professoresSelecionados, setProfessoresSelecionados] = useState<string[]>([]);
-  const [viewType, setViewType] = useState<'professor' | 'unidade' | 'detalhado'>('professor');
+  const [viewType, setViewType] = useState<'professor' | 'unidade' | 'detalhado' | 'integral' | 'sem-integral'>('professor');
   const [isProfOpen, setIsProfOpen] = useState(false);
 
   const normalizeText = (t: any) => 
     String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
 
-  // Função vital para converter strings de moeda em números operáveis
   const parseCurrency = (val: any): number => {
     if (val === undefined || val === null || val === '') return 0;
     if (typeof val === 'number') return val;
-    
-    // Remove R$, espaços, pontos de milhar e troca vírgula por ponto
-    const cleaned = String(val)
-      .replace(/R\$/g, '')
-      .replace(/\s/g, '')
-      .replace(/\./g, '')
-      .replace(',', '.');
-    
+    const cleaned = String(val).replace(/R\$/g, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
     const num = parseFloat(cleaned);
     return isNaN(num) ? 0 : num;
   };
@@ -59,7 +55,6 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
     if (!dateVal || String(dateVal).trim() === '' || String(dateVal).toLowerCase() === 'null') return null;
     try {
       let s = String(dateVal).trim().toLowerCase();
-      s = s.split(',')[0].trim();
       const dmyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
       if (dmyMatch) {
         const day = parseInt(dmyMatch[1]);
@@ -73,6 +68,22 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
       const d = new Date(dateVal);
       return isNaN(d.getTime()) ? null : d;
     } catch (e) { return null; }
+  };
+
+  const formatEscolaridade = (aluno: Aluno) => {
+    let etapa = (aluno.etapa || '').trim();
+    let turma = (aluno.turmaEscolar || '').toString().replace(/turma\s*/gi, '').trim();
+    if (!etapa) return "--";
+    etapa = etapa.toUpperCase().replace('EDUCACAO INFANTIL', 'EI').replace('ENSINO FUNDAMENTAL', 'EF').replace('ENSINO MEDIO', 'EM');
+    let result = etapa;
+    const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
+    if (turma && !invalidClasses.includes(turma.toUpperCase())) {
+      const lastChar = etapa.split(' ').pop();
+      if (lastChar !== turma.toUpperCase()) {
+        result = `${etapa} ${turma.toUpperCase()}`;
+      }
+    }
+    return result;
   };
 
   const unidadesUnicas = useMemo(() => Array.from(new Set(turmas.map(t => t.unidade).filter(Boolean))).sort(), [turmas]);
@@ -115,19 +126,25 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
       
       if (!turma) return;
 
-      // Compatibilidade: Busca por valorMensal ou custo (nome comum na planilha)
       const vBase = parseCurrency(turma.valorMensal || (turma as any).custo || (turma as any).valor || 0);
       
+      // Lógica de Descontos: Fidelidade + Plano Integral
       const emailAluno = normalizeText(aluno.email);
-      const temDesconto = emailAluno && emailCounts[emailAluno] > 1;
-      const vDesconto = temDesconto ? vBase * 0.10 : 0;
-      const motivo = temDesconto ? "Fidelidade (E-mail Duplicado 10%)" : "--";
+      const isFidelidade = emailAluno && emailCounts[emailAluno] > 1;
+      const isPlanoIntegral = normalizeText(aluno.plano).includes('integral');
+      
+      const pctDesconto = (isFidelidade ? 0.10 : 0) + (isPlanoIntegral ? 0.10 : 0);
+      const vDesconto = vBase * pctDesconto;
+      
+      let motivo = "--";
+      if (isFidelidade && isPlanoIntegral) motivo = "Fidelidade + Integral (20%)";
+      else if (isFidelidade) motivo = "Fidelidade (E-mail Duplicado 10%)";
+      else if (isPlanoIntegral) motivo = "Plano Integral (10%)";
 
       const dMat = parseToDate(m.dataMatricula);
       if (!dMat) return;
 
       let currPayDate = new Date(dMat);
-      // Trava de segurança para não gerar loops infinitos
       let iterations = 0;
       while (currPayDate <= end && iterations < 120) {
         iterations++;
@@ -149,18 +166,20 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
             unidade: turma.unidade,
             turma: turma.nome,
             professor: turma.professor,
+            escolaridade: formatEscolaridade(aluno),
             vBruto: vBase,
             vDesconto: vDesconto,
             vLiquido: vBase - vDesconto,
             motivo,
-            vencimento: new Date(currPayDate)
+            vencimento: new Date(currPayDate),
+            plano: aluno.plano || ""
           });
 
           totalBruto += vBase;
           totalDescontos += vDesconto;
           totalLiquido += (vBase - vDesconto);
           countMensalidades++;
-          if (temDesconto) countDescontos++;
+          if (pctDesconto > 0) countDescontos++;
         }
         currPayDate.setMonth(currPayDate.getMonth() + 1);
       }
@@ -198,14 +217,114 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
     return Object.values(map).sort((a:any, b:any) => a.nome.localeCompare(b.nome));
   }, [stats]);
 
+  // Itens excluindo plano integral
+  const itensSemIntegral = useMemo(() => {
+    return stats.items.filter(it => !normalizeText(it.plano).includes('integral'));
+  }, [stats.items]);
+
+  // Lógica específica para visualização agrupada de Integral
+  const itensIntegralAgrupados = useMemo(() => {
+    const alunosIntegralAtivos = alunos.filter(a => 
+      normalizeText(a.plano).includes('integral') && 
+      a.statusMatricula === 'Ativo'
+    );
+    
+    return alunosIntegralAtivos.map(aluno => {
+      const mats = matriculas.filter(m => m.alunoId === aluno.id);
+      
+      let somaValoresTurmas = 0;
+      const nomesTurmas: string[] = [];
+      
+      mats.forEach(m => {
+        const studentCourseName = normalizeText(m.turmaId.split('-')[0]);
+        const studentUnit = normalizeText(m.unidade);
+
+        const turmaObj = turmas.find(t => 
+          t.id === m.turmaId || 
+          (normalizeText(t.unidade) === studentUnit && (
+            normalizeText(t.nome) === studentCourseName ||
+            normalizeText(t.nome).includes(studentCourseName) ||
+            studentCourseName.includes(normalizeText(t.nome))
+          ))
+        );
+
+        if (turmaObj) {
+          nomesTurmas.push(turmaObj.nome);
+          const vBase = parseCurrency(turmaObj.valorMensal || (turmaObj as any).custo || 0);
+          
+          const tNomeNorm = normalizeText(turmaObj.nome);
+          const isEspecial = tNomeNorm.includes('funcional kids terca') || tNomeNorm.includes('funcional kids quarta');
+          
+          somaValoresTurmas += isEspecial ? (vBase * 0.5) : vBase;
+        }
+      });
+
+      return {
+        estudante: aluno.nome,
+        unidade: aluno.unidade,
+        turmas: nomesTurmas.join(', '),
+        escolaridade: formatEscolaridade(aluno),
+        plano: aluno.plano || 'Integral',
+        valorTotal: somaValoresTurmas,
+        valorAPagar: somaValoresTurmas * 0.65
+      };
+    }).sort((a, b) => a.estudante.localeCompare(b.estudante));
+  }, [alunos, matriculas, turmas]);
+
   const handleExport = () => {
-    const headers = ["Estudante", "Unidade", "Turma", "Professor", "Vencimento", "Valor Bruto", "Desconto", "Motivo", "Liquido"];
-    const rows = stats.items.map(it => [it.estudante, it.unidade, it.turma, it.professor, it.vencimento.toLocaleDateString('pt-BR'), it.vBruto.toFixed(2), it.vDesconto.toFixed(2), it.motivo, it.vLiquido.toFixed(2)]);
+    let headers: string[] = [];
+    let rows: any[][] = [];
+    let fileName = `relatorio_financeiro_sfk_${viewType}`;
+
+    if (viewType === 'professor') {
+      headers = ["Professor", "Bruto Total", "Líquido Estimado", "Qtde Mensalidades"];
+      rows = resumoProfessor.map((p: any) => [
+        p.nome,
+        p.bruto.toFixed(2).replace('.', ','),
+        p.liquido.toFixed(2).replace('.', ','),
+        p.count
+      ]);
+    } else if (viewType === 'unidade') {
+      headers = ["Unidade", "Bruto Total", "Líquido Estimado", "Qtde Mensalidades"];
+      rows = resumoUnidade.map((u: any) => [
+        u.nome,
+        u.bruto.toFixed(2).replace('.', ','),
+        u.liquido.toFixed(2).replace('.', ','),
+        u.count
+      ]);
+    } else if (viewType === 'detalhado' || viewType === 'sem-integral') {
+      const dataToExport = viewType === 'detalhado' ? stats.items : itensSemIntegral;
+      headers = ["Estudante", "Unidade", "Escolaridade", "Turma", "Professor", "Vencimento", "Valor Bruto", "Desconto", "Motivo", "Liquido"];
+      rows = dataToExport.map(it => [
+        it.estudante, 
+        it.unidade, 
+        it.escolaridade,
+        it.turma, 
+        it.professor, 
+        it.vencimento.toLocaleDateString('pt-BR'), 
+        it.vBruto.toFixed(2).replace('.', ','), 
+        it.vDesconto.toFixed(2).replace('.', ','), 
+        it.motivo, 
+        it.vLiquido.toFixed(2).replace('.', ',')
+      ]);
+    } else if (viewType === 'integral') {
+      headers = ["Estudante", "Unidade", "Escolaridade", "Turmas", "Tipo Plano", "Valor Bruto (Ajustado)", "Valor a Pagar (65%)"];
+      rows = itensIntegralAgrupados.map(it => [
+        it.estudante, 
+        it.unidade,
+        it.escolaridade,
+        it.turmas, 
+        it.plano, 
+        it.valorTotal.toFixed(2).replace('.', ','), 
+        it.valorAPagar.toFixed(2).replace('.', ',')
+      ]);
+    }
+
     const csv = [headers, ...rows].map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(';')).join('\n');
     const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `financeiro_sfk_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `${fileName}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
 
@@ -217,7 +336,7 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
           <p className="text-slate-500 font-medium">Projeção de faturamento baseada no 'Custo' das turmas.</p>
         </div>
         <button onClick={handleExport} className="flex items-center gap-2 bg-[#0f172a] text-white px-8 py-4 rounded-2xl font-black text-xs hover:bg-slate-800 transition-all shadow-xl active:scale-95">
-          <Download className="w-5 h-5" /> EXPORTAR CSV
+          <Download className="w-5 h-5" /> EXPORTAR CSV ({viewType === 'detalhado' ? 'NOMINAL' : viewType === 'sem-integral' ? 'SEM INTEGRAL' : viewType.toUpperCase()})
         </button>
       </div>
 
@@ -264,25 +383,27 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
         <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">RECEITA BRUTA TOTAL</p>
            <h4 className="text-5xl font-black text-slate-900 leading-none">{stats.summary.bruto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</h4>
-           <p className="text-[10px] font-black text-slate-500 uppercase mt-6 flex items-center gap-2"><DollarSign className="w-4 h-4"/> {stats.summary.count} MENSALIDADES</p>
+           <p className="text-[10px] font-black text-slate-500 mt-6 flex items-center gap-2"><DollarSign className="w-4 h-4"/> {stats.summary.count} MENSALIDADES</p>
         </div>
         <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">TOTAL DE DESCONTOS</p>
            <h4 className="text-5xl font-black text-red-500 leading-none">{stats.summary.descontos.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</h4>
-           <p className="text-[10px] font-black text-red-400 uppercase mt-6 flex items-center gap-2"><TrendingDown className="w-4 h-4"/> {stats.summary.discountCount} DESCONTOS APLICADOS</p>
+           <p className="text-[10px] font-black text-red-400 mt-6 flex items-center gap-2"><TrendingDown className="w-4 h-4"/> {stats.summary.discountCount} DESCONTOS APLICADOS</p>
         </div>
         <div className="bg-blue-600 p-10 rounded-[40px] shadow-xl text-white">
            <p className="text-[10px] font-black text-blue-200 uppercase tracking-widest mb-2">RECEITA LÍQUIDA ESTIMADA</p>
            <h4 className="text-5xl font-black leading-none">{stats.summary.liquido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</h4>
-           <p className="text-[10px] font-black text-blue-100 uppercase mt-6 flex items-center gap-2"><Activity className="w-4 h-4"/> FATURAMENTO LÍQUIDO ESTIMADO</p>
+           <p className="text-[10px] font-black text-blue-100 mt-6 flex items-center gap-2"><Activity className="w-4 h-4"/> FATURAMENTO LÍQUIDO ESTIMADO</p>
         </div>
       </div>
 
       <div className="space-y-6">
-        <div className="flex bg-slate-100 p-1.5 rounded-[24px] w-fit shadow-inner">
-          <button onClick={() => setViewType('professor')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all ${viewType === 'professor' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>RESUMO POR PROFESSOR</button>
-          <button onClick={() => setViewType('unidade')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all ${viewType === 'unidade' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>RESUMO POR UNIDADE</button>
-          <button onClick={() => setViewType('detalhado')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all ${viewType === 'detalhado' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>DETALHAMENTO NOMINAL</button>
+        <div className="flex bg-slate-100 p-1.5 rounded-[24px] w-fit shadow-inner overflow-x-auto custom-scrollbar">
+          <button onClick={() => setViewType('professor')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all shrink-0 ${viewType === 'professor' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>RESUMO POR PROFESSOR</button>
+          <button onClick={() => setViewType('unidade')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all shrink-0 ${viewType === 'unidade' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>RESUMO POR UNIDADE</button>
+          <button onClick={() => setViewType('detalhado')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all shrink-0 ${viewType === 'detalhado' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>DETALHAMENTO NOMINAL</button>
+          <button onClick={() => setViewType('sem-integral')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all shrink-0 ${viewType === 'sem-integral' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}><UserMinus className="w-3 h-3" /> SEM INTEGRAL</button>
+          <button onClick={() => setViewType('integral')} className={`px-6 py-2.5 rounded-[20px] text-[10px] font-black flex items-center gap-2 transition-all shrink-0 ${viewType === 'integral' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}><Zap className="w-3 h-3 fill-current" /> ESTUDANTES INTEGRAL</button>
         </div>
 
         {viewType === 'professor' && (
@@ -331,40 +452,93 @@ const Financeiro: React.FC<FinanceiroProps> = ({ alunos, turmas, matriculas }) =
           </div>
         )}
 
-        {viewType === 'detalhado' && (
+        {(viewType === 'detalhado' || viewType === 'sem-integral') && (
           <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
              <div className="overflow-x-auto">
                 <table className="w-full text-left">
                    <thead>
                       <tr className="bg-[#0f172a] text-white text-[10px] font-black uppercase tracking-widest">
                          <th className="px-8 py-6">ESTUDANTE / VENCIMENTO</th>
-                         <th className="px-8 py-6">UNIDADE / TURMA</th>
+                         <th className="px-8 py-6">UNIDADE / TURMA / ESC.</th>
                          <th className="px-8 py-6">PROFESSOR</th>
                          <th className="px-8 py-6 text-right">VALOR BASE</th>
                          <th className="px-8 py-6 text-right">DESCONTO</th>
-                         <th className="px-8 py-6">MOTIVO</th>
                          <th className="px-8 py-6 text-right">LÍQUIDO</th>
                       </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-50">
-                      {stats.items.length > 0 ? stats.items.map((row, i) => (
+                      {(viewType === 'detalhado' ? stats.items : itensSemIntegral).length > 0 ? (viewType === 'detalhado' ? stats.items : itensSemIntegral).map((row, i) => (
                         <tr key={i} className="hover:bg-slate-50/50">
                            <td className="px-8 py-5">
-                              <p className="text-sm font-black text-slate-800 uppercase">{row.estudante}</p>
+                              <p className="text-sm font-black text-slate-800 uppercase leading-none">{row.estudante}</p>
                               <p className="text-[10px] font-bold text-slate-400 mt-1">Vencimento: {row.vencimento.toLocaleDateString('pt-BR')}</p>
                            </td>
                            <td className="px-8 py-5">
-                              <p className="text-[10px] font-black text-blue-500 uppercase">{row.unidade}</p>
-                              <p className="text-xs font-bold text-slate-700 uppercase">{row.turma}</p>
+                              <p className="text-[10px] font-black text-blue-500 uppercase leading-none">{row.unidade}</p>
+                              <p className="text-xs font-bold text-slate-700 uppercase mt-0.5">{row.turma}</p>
+                              <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded text-[8px] font-black uppercase tracking-tighter">
+                                <GraduationCap className="w-2.5 h-2.5" /> {row.escolaridade}
+                              </span>
                            </td>
                            <td className="px-8 py-5 text-xs font-bold text-slate-500 uppercase">{row.professor}</td>
-                           <td className="px-8 py-5 text-right font-bold">{row.vBruto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                           <td className="px-8 py-5 text-right font-bold text-slate-600">{row.vBruto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                            <td className="px-8 py-5 text-right font-bold text-red-400">-{row.vDesconto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
-                           <td className="px-8 py-5"><span className="text-9px font-black px-2 py-1 bg-slate-50 rounded uppercase text-slate-400">{row.motivo}</span></td>
                            <td className="px-8 py-5 text-right font-black text-blue-600 text-lg">{row.vLiquido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                         </tr>
                       )) : (
-                        <tr><td colSpan={7} className="px-8 py-20 text-center text-slate-300 font-black uppercase">Nenhum dado projetado para este período.</td></tr>
+                        <tr><td colSpan={6} className="px-8 py-20 text-center text-slate-300 font-black uppercase">Nenhum dado localizado para este filtro.</td></tr>
+                      )}
+                   </tbody>
+                </table>
+             </div>
+          </div>
+        )}
+
+        {viewType === 'integral' && (
+          <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
+             <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                   <thead>
+                      <tr className="bg-[#0f172a] text-white text-[10px] font-black uppercase tracking-widest">
+                         <th className="px-8 py-6">ESTUDANTE</th>
+                         <th className="px-8 py-6">UNIDADE / ESCOLARIDADE</th>
+                         <th className="px-8 py-6">TURMAS ATIVAS</th>
+                         <th className="px-8 py-6">TIPO PLANO</th>
+                         <th className="px-8 py-6 text-right">VALOR BRUTO</th>
+                         <th className="px-8 py-6 text-right">VALOR A PAGAR (65%)</th>
+                      </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-50">
+                      {itensIntegralAgrupados.length > 0 ? itensIntegralAgrupados.map((row, i) => (
+                        <tr key={i} className="hover:bg-slate-50/50">
+                           <td className="px-8 py-5">
+                              <p className="text-sm font-black text-slate-800 uppercase leading-none">{row.estudante}</p>
+                           </td>
+                           <td className="px-8 py-5">
+                              <div className="flex flex-col gap-1">
+                                <p className="text-[10px] font-black text-blue-500 uppercase leading-none">{row.unidade}</p>
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-lg text-[8px] font-black uppercase tracking-tighter w-fit">
+                                  <GraduationCap className="w-2.5 h-2.5" /> {row.escolaridade}
+                                </span>
+                              </div>
+                           </td>
+                           <td className="px-8 py-5">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase leading-snug max-w-xs">{row.turmas}</p>
+                           </td>
+                           <td className="px-8 py-5">
+                              <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-100 rounded text-[9px] font-black uppercase">
+                                {row.plano}
+                              </span>
+                           </td>
+                           <td className="px-8 py-5 text-right font-bold text-slate-600">
+                              {row.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                           </td>
+                           <td className="px-8 py-5 text-right font-black text-emerald-600 text-lg">
+                              {row.valorAPagar.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                           </td>
+                        </tr>
+                      )) : (
+                        <tr><td colSpan={6} className="px-8 py-20 text-center text-slate-300 font-black uppercase">Nenhum estudante integral com matrícula ativa localizado.</td></tr>
                       )}
                    </tbody>
                 </table>

@@ -15,8 +15,17 @@
           100% { transform: translateX(300%); }
         }
         
+        @keyframes pulse-slow {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.95; transform: scale(0.99); }
+        }
+
         .animate-shimmer {
           animation: shimmer 2s infinite linear;
+        }
+
+        .animate-pulse-slow {
+          animation: pulse-slow 3s infinite ease-in-out;
         }
 
         .custom-scrollbar::-webkit-scrollbar {

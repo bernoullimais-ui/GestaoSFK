@@ -25,11 +25,25 @@ import {
     ClipboardCheck,
     Tag,
     UserPlus,
-    BarChart3
+    BarChart3,
+    AlertTriangle,
+    ChevronRight
 } from 'lucide-react';
 import { Presenca, Usuario, Aluno, Matricula, Turma, ViewType, AulaExperimental, AcaoRetencao, IdentidadeConfig, UnidadeMapping } from '../types';
 
 const normalize = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
+const slugify = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+// Função padronizada para cores por unidade conforme identidade visual SFK
+const getUnidadeStyle = (unidade: string) => {
+  const u = String(unidade || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (u.includes('AKA')) return 'bg-blue-100 text-blue-700 border-blue-200';
+  if (u.includes('BUNNY')) return 'bg-purple-100 text-purple-700 border-purple-200';
+  if (u.includes('LICEU')) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  if (u.includes('PEDRINHO')) return 'bg-amber-100 text-amber-700 border-amber-200';
+  if (u.includes('OFICINA')) return 'bg-rose-100 text-rose-700 border-rose-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+};
 
 interface DashboardProps {
   user: Usuario;
@@ -69,10 +83,68 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const isMaster = user.nivel === 'Gestor Master' || user.nivel === 'Start';
   const isGestorAdmin = user.nivel === 'Gestor Administrativo';
-  const isPowerUser = isMaster || isGestorAdmin || user.nivel === 'Gestor' || user.nivel === 'Coordenador';
+  const isPrivilegedUser = isMaster || isGestorAdmin;
   const isProfessor = user.nivel === 'Professor' || user.nivel === 'Estagiário';
 
   const profNameNorm = useMemo(() => normalize(user.nome || user.login).replace(/^prof\.?\s*/i, ''), [user]);
+
+  const formatEscolaridade = (exp: AulaExperimental) => {
+    let etapa = (exp.etapa || (exp as any).estagioanoescolar || '').trim();
+    let turma = (exp.turmaEscolar || (exp as any).turma || '').toString().replace(/turma\s*/gi, '').trim();
+
+    if (!etapa) return "";
+
+    etapa = etapa.toUpperCase()
+      .replace('EDUCACAO INFANTIL', 'EI')
+      .replace('ENSINO FUNDAMENTAL', 'EF')
+      .replace('ENSINO MEDIO', 'EM');
+
+    let result = etapa;
+    
+    const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
+    if (turma && !invalidClasses.includes(turma.toUpperCase())) {
+      const lastChar = etapa.split(' ').pop();
+      if (lastChar !== turma.toUpperCase()) {
+        result = `${etapa} ${turma.toUpperCase()}`;
+      }
+    }
+    
+    return result;
+  };
+
+  // Lógica de cálculo de risco para o Alerta do Dashboard - Restrito a Master/Admin
+  const alertasRetencaoPendentes = useMemo(() => {
+    if (!isPrivilegedUser) return 0;
+
+    const groups: Record<string, { presencas: Presenca[], alunoName: string, unidade: string, curso: string }> = {};
+    presencas.forEach(p => {
+      const alunoName = (p as any)._estudantePlanilha || p.alunoId;
+      const cursoName = (p as any)._turmaPlanilha || p.turmaId;
+      const key = `${slugify(alunoName)}|${slugify(p.unidade)}|${slugify(cursoName)}`;
+      if (!groups[key]) groups[key] = { presencas: [], alunoName: alunoName, unidade: p.unidade, curso: cursoName };
+      groups[key].presencas.push(p);
+    });
+
+    let countPendente = 0;
+    for (const key in groups) {
+      const group = groups[key];
+      const sortedPresencas = [...group.presencas].sort((a, b) => b.data.localeCompare(a.data));
+      const ultimas3 = sortedPresencas.slice(0, 3);
+      const tresFaltas = ultimas3.length >= 3 && ultimas3.every(p => slugify(p.status) === 'ausente');
+      const ultimas9 = sortedPresencas.slice(0, 9);
+      let taxa = 0; 
+      if (ultimas9.length >= 9) taxa = Math.round((ultimas9.filter(p => slugify(p.status) === 'ausente').length / 9) * 100);
+      
+      if (tresFaltas || (ultimas9.length >= 9 && taxa >= 50)) {
+        const lastPresence = sortedPresencas[0];
+        const alertaId = `risk|${key}|${lastPresence.data}`;
+        const jaTratado = acoesRetencao.some(a => a.alertaId === alertaId) || slugify(lastPresence.alarme) === 'enviado';
+        
+        if (!jaTratado) countPendente++;
+      }
+    }
+    return countPendente;
+  }, [presencas, acoesRetencao, isPrivilegedUser]);
 
   const getIdentidadeForExp = (exp: AulaExperimental): IdentidadeConfig => {
     const unitNorm = normalize(exp.unidade);
@@ -95,7 +167,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     const currentYear = new Date().getFullYear();
 
     if (isProfessor) {
-      // Lógica específica para Professor
       const minhasTurmasBase = turmas.filter(t => {
         const tProf = normalize(t.professor).replace(/^prof\.?\s*/i, '');
         return tProf.includes(profNameNorm) || profNameNorm.includes(tProf);
@@ -105,17 +176,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       const minhasTurmasAtivas = minhasTurmasBase.filter(t => minhasMatriculasAtivas.some(m => m.turmaId === t.id));
       const meusAlunosAtivosIds = new Set(minhasMatriculasAtivas.map(m => m.alunoId));
 
-      // Conversão no ano vigente
       const minhasExpNoAno = experimentais.filter(exp => {
         const d = new Date(exp.aula);
         if (d.getFullYear() !== currentYear) return false;
-        // Filtra experimentais vinculadas às turmas/cursos do professor
         return minhasTurmasBase.some(t => normalize(t.nome).includes(normalize(exp.curso)) && normalize(t.unidade) === normalize(exp.unidade));
       });
       const convertidosCount = minhasExpNoAno.filter(e => e.convertido).length;
       const taxaConversao = minhasExpNoAno.length > 0 ? Math.round((convertidosCount / minhasExpNoAno.length) * 100) : 0;
 
-      // Cancelamentos no ano vigente
       let cancelamentosNoAno = 0;
       let totalMatriculasNoAno = minhasMatriculasAtivas.length;
 
@@ -131,7 +199,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       totalMatriculasNoAno += cancelamentosNoAno;
       const taxaCancelamento = totalMatriculasNoAno > 0 ? Math.round((cancelamentosNoAno / totalMatriculasNoAno) * 100) : 0;
 
-      // Detalhamento de Ocupação
       const ocupacaoDetalhamento = minhasTurmasBase.map(t => {
         const count = minhasMatriculasAtivas.filter(m => m.turmaId === t.id).length;
         const cap = t.capacidade || 20;
@@ -146,7 +213,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         ocupacaoDetalhamento
       };
     } else {
-      // Lógica Gestor/Master original
       const scopeMatriculas = isGlobal ? matriculas : matriculas.filter(m => normalize(m.unidade).includes(userUnitNorm) || userUnitNorm.includes(normalize(m.unidade)));
       const activeCoursesIds = new Set(scopeMatriculas.map(m => m.turmaId));
       let totalPct = 0;
@@ -166,15 +232,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [isMaster, isProfessor, profNameNorm, user.unidade, matriculas, alunos, turmas, experimentais]);
 
+  // Lógica de leads pendentes - Restrito a Master/Admin
   const leadsParaConversao = useMemo(() => {
-    if (!isPowerUser) return [];
+    if (!isPrivilegedUser) return [];
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
     return experimentais.filter(exp => {
       if (exp.convertido) return false;
       const dAula = new Date(exp.aula); dAula.setHours(12, 0, 0, 0); 
       return (exp.status === 'Presente' && !exp.followUpSent && dAula <= hoje) || (exp.status === 'Ausente' && !exp.reagendarEnviado && dAula <= hoje);
     }).sort((a, b) => new Date(b.aula).getTime() - new Date(a.aula).getTime());
-  }, [experimentais, isPowerUser]);
+  }, [experimentais, isPrivilegedUser]);
 
   const openComposeModal = (exp: AulaExperimental) => {
     const identity = getIdentidadeForExp(exp);
@@ -207,6 +274,29 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-8 animate-in fade-in pb-20">
+      {/* Alerta de Retenção Crítica - Apenas para Gestor Master e Administrativo */}
+      {isPrivilegedUser && alertasRetencaoPendentes > 0 && (
+        <div className="bg-rose-50 border-2 border-rose-100 rounded-[40px] p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl shadow-rose-100/50 animate-pulse-slow">
+          <div className="flex items-center gap-6">
+            <div className="w-16 h-16 bg-rose-500 rounded-[24px] flex items-center justify-center text-white shadow-lg shadow-rose-200">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-rose-900 uppercase tracking-tight">Gestão de Retenção Crítica</h3>
+              <p className="text-rose-600 font-bold text-sm">
+                Existem <span className="font-black text-rose-700 underline">{alertasRetencaoPendentes} ações</span> de retenção aguardando atendimento imediato.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => onNavigate && onNavigate('churn-risk')}
+            className="bg-rose-600 hover:bg-rose-700 text-white px-10 py-5 rounded-3xl font-black text-xs uppercase tracking-widest flex items-center gap-3 transition-all active:scale-95 shadow-lg shadow-rose-200"
+          >
+            REALIZAR TRATAMENTO <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div><h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight">Painel de Performance</h2><p className="text-slate-500 font-medium">{isProfessor ? `Olá Prof. ${user.nome || user.login}, estas são suas métricas.` : 'Visão administrativa e estratégica.'}</p></div>
       </div>
@@ -251,7 +341,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     <div className="h-full bg-blue-600 rounded-full transition-all duration-1000" style={{ width: `${turma.pct}%` }} />
                   </div>
                   <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                    <span>{turma.count} MATRÍCULAS</span>
+                    <span>{turma.count} MATRICULAS</span>
                     <span>{turma.cap} VAGAS</span>
                   </div>
                 </div>
@@ -284,7 +374,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {isPowerUser && leadsParaConversao.length > 0 && (
+      {/* Alerta de Conversão de Leads - Apenas para Gestor Master e Administrativo */}
+      {isPrivilegedUser && leadsParaConversao.length > 0 && (
         <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
           <div className="flex items-center gap-4 mb-8">
             <div className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg"><Zap className="w-6 h-6 fill-current" /></div>
@@ -296,6 +387,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           <div className="flex flex-col gap-4">
             {leadsParaConversao.map(lead => {
               const isPresente = lead.status === 'Presente';
+              const escolaridade = formatEscolaridade(lead);
               return (
                 <div key={lead.id} className="bg-slate-50/50 p-6 rounded-[32px] border border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-6 transition-all hover:border-blue-100">
                   <div className="flex items-center gap-5 min-w-0">
@@ -308,10 +400,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                         <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase">
                           <Calendar className="w-3 h-3 text-blue-500" /> {formatDate(lead.aula)}
                         </div>
-                        <div className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 text-[9px] font-black uppercase tracking-tighter border border-purple-100 flex items-center gap-1">
+                        <div className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-tighter border flex items-center gap-1 shadow-sm ${getUnidadeStyle(lead.unidade)}`}>
                           <Tag className="w-2.5 h-2.5" /> {lead.unidade}
                         </div>
-                        <div className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-[9px] font-black uppercase tracking-tighter border border-blue-100 flex items-center gap-1">
+                        {/* Selo de Escolaridade IMEDIATAMENTE após a Unidade */}
+                        {escolaridade && (
+                          <div className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-600 text-[9px] font-black uppercase tracking-tighter border border-blue-100 flex items-center gap-1 shadow-sm">
+                            <GraduationCap className="w-2.5 h-2.5" /> {escolaridade}
+                          </div>
+                        )}
+                        <div className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[9px] font-black uppercase tracking-tighter border border-indigo-100 flex items-center gap-1 shadow-sm">
                           <BookOpen className="w-2.5 h-2.5" /> {lead.curso}
                         </div>
                         <div className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-tighter border ${isPresente ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>

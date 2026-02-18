@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { 
   Search, 
@@ -23,7 +24,7 @@ const getUnidadeStyle = (unidade: string) => {
   if (u.includes('BUNNY')) return 'bg-purple-600/10 text-purple-600 border-purple-200/50';
   if (u.includes('LICEU')) return 'bg-emerald-600/10 text-emerald-700 border-emerald-200/50';
   if (u.includes('PEDRINHO')) return 'bg-amber-600/10 text-amber-700 border-amber-200/50';
-  if (u.includes('OFICINA')) return 'bg-rose-600/10 text-rose-600 border-rose-200/50';
+  if (u.includes('OFICINA')) return 'bg-rose-600/10 text-rose-600 border-red-200/50';
   return 'bg-slate-600/10 text-slate-500 border-slate-200/50';
 };
 
@@ -112,11 +113,27 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({ alunos, turmas, matriculas, u
   };
 
   const formatEscolaridade = (aluno: Aluno) => {
-    const e = (aluno.etapa || '').toUpperCase();
-    const t = (aluno.turmaEscolar || '').toUpperCase();
-    let res = e.includes('INFANTIL') ? 'EI' : e.includes('FUNDAMENTAL') ? 'EF' : e.includes('MEDIO') ? 'EM' : e;
-    if (t && t !== 'NÃO SEI' && t !== '' && t !== 'NAO SEI') res += `-${t}`;
-    return res || '--';
+    let etapa = (aluno.etapa || '').trim();
+    let turma = (aluno.turmaEscolar || '').toString().replace(/turma\s*/gi, '').trim();
+
+    if (!etapa) return "--";
+
+    etapa = etapa.toUpperCase()
+      .replace('EDUCACAO INFANTIL', 'EI')
+      .replace('ENSINO FUNDAMENTAL', 'EF')
+      .replace('ENSINO MEDIO', 'EM');
+
+    let result = etapa;
+    
+    const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
+    if (turma && !invalidClasses.includes(turma.toUpperCase())) {
+      const lastChar = etapa.split(' ').pop();
+      if (lastChar !== turma.toUpperCase()) {
+        result = `${etapa} ${turma.toUpperCase()}`;
+      }
+    }
+    
+    return result;
   };
 
   return (
@@ -236,7 +253,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({ alunos, turmas, matriculas, u
                       onClick={() => aluno.whatsapp1 && openMessageModal(aluno, aluno.whatsapp1, aluno.responsavel1 || aluno.nome)}
                       className="flex items-center gap-2 text-emerald-600 font-bold text-sm hover:text-emerald-700 transition-colors"
                     >
-                      <MessageCircle className="w-4 h-4 fill-emerald-600/10" /> (71) {aluno.whatsapp1 || '--'}
+                      <MessageCircle className="w-4 h-4 fill-emerald-600/10" /> {aluno.whatsapp1 || '--'}
                     </button>
                   </div>
 
@@ -247,7 +264,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({ alunos, turmas, matriculas, u
                       onClick={() => aluno.whatsapp2 && openMessageModal(aluno, aluno.whatsapp2, aluno.responsavel2 || aluno.nome)}
                       className="flex items-center gap-2 text-emerald-600 font-bold text-sm hover:text-emerald-700 transition-colors"
                     >
-                      <MessageCircle className="w-4 h-4 fill-emerald-600/10" /> (71) {aluno.whatsapp2 || '--'}
+                      <MessageCircle className="w-4 h-4 fill-emerald-600/10" /> {aluno.whatsapp2 || '--'}
                     </button>
                   </div>
                 </div>
