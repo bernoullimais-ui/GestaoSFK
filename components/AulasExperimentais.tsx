@@ -25,19 +25,10 @@ import { AulaExperimental, Usuario, Turma, Aluno, IdentidadeConfig, UnidadeMappi
 
 // Nova função de cores do avatar baseada em regras de negócio para Experimentais
 const getExperimentalAvatarColor = (exp: AulaExperimental, currentStatus: string | undefined) => {
-  // 1. Verde esmeralda - Caso tenha o selo matriculado (conversão matrícula)
   if (exp.convertido) return 'bg-emerald-500';
-  
-  // 3. Vermelho - caso no botão de ausencia esteja ativo
   if (currentStatus === 'Ausente') return 'bg-rose-500';
-  
-  // 4. Roxo (purple-500) - Caso tenha participado da aula, mas não tenha convertido a matrícula
   if (currentStatus === 'Presente') return 'bg-purple-500';
-  
-  // 2. Amber-500 - Caso o Lembrete ainda não tenha sido enviado e não tenha o selo Matriculado
   if (!exp.lembreteEnviado) return 'bg-amber-500';
-  
-  // Default - Caso já tenha enviado lembrete mas ainda esteja pendente de aula
   return 'bg-slate-400';
 };
 
@@ -75,7 +66,20 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const [isSavingId, setIsSavingId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [localChanges, setLocalChanges] = useState<Record<string, { status?: string, feedback?: string }>>({});
-  const [messageModal, setMessageModal] = useState<{ isOpen: boolean; exp: AulaExperimental | null; message: string; identity?: IdentidadeConfig }>({ isOpen: false, exp: null, message: '' });
+  
+  // Modal de mensagem agora rastreia o tipo explicitamente para marcar a coluna certa
+  const [messageModal, setMessageModal] = useState<{ 
+    isOpen: boolean; 
+    exp: AulaExperimental | null; 
+    message: string; 
+    identity?: IdentidadeConfig;
+    actionType: 'lembrete' | 'feedback' | 'reagendar';
+  }>({ 
+    isOpen: false, 
+    exp: null, 
+    message: '',
+    actionType: 'feedback'
+  });
 
   const normalizeStr = (t: string) => String(t || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ').trim();
   const isMaster = currentUser.nivel === 'Gestor Master' || currentUser.nivel === 'Start';
@@ -84,31 +88,24 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
   const isRegente = currentUser.nivel === 'Regente';
   const canSendMessage = isMaster || isGestorAdmin;
 
+  const formatDateBR = (dateStr: string) => {
+    if (!dateStr) return "";
+    const parts = dateStr.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return dateStr;
+  };
+
   const formatEscolaridade = (exp: AulaExperimental) => {
-    // Tenta pegar a etapa da coluna E (estagioanoescolar) e a turma da coluna F (turmaescolar)
     let etapa = (exp.etapa || (exp as any).estagioanoescolar || '').trim();
     let turma = (exp.turmaEscolar || (exp as any).turma || '').toString().replace(/turma\s*/gi, '').trim();
-
     if (!etapa) return "";
-
-    // Normaliza a etapa para as siglas padrão
-    etapa = etapa.toUpperCase()
-      .replace('EDUCACAO INFANTIL', 'EI')
-      .replace('ENSINO FUNDAMENTAL', 'EF')
-      .replace('ENSINO MEDIO', 'EM');
-
+    etapa = etapa.toUpperCase().replace('EDUCACAO INFANTIL', 'EI').replace('ENSINO FUNDAMENTAL', 'EF').replace('ENSINO MEDIO', 'EM');
     let result = etapa;
-    
-    // Lista de valores que não devem ser exibidos como turma
     const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
     if (turma && !invalidClasses.includes(turma.toUpperCase())) {
-      // Só concatena se a etapa já não terminar with a letra da turma (prevenção de duplicidade)
       const lastChar = etapa.split(' ').pop();
-      if (lastChar !== turma.toUpperCase()) {
-        result = `${etapa} ${turma.toUpperCase()}`;
-      }
+      if (lastChar !== turma.toUpperCase()) result = `${etapa} ${turma.toUpperCase()}`;
     }
-    
     return result;
   };
 
@@ -120,7 +117,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     }
     const matchingTurma = turmas.find(t => normalizeStr(t.nome) === normalizeStr(exp.curso) && normalizeStr(t.unidade) === normalizeStr(exp.unidade));
     const identName = matchingTurma?.identidade || "";
-    // Fix: Corrected property name tplMessage to tplMensagem to match IdentidadeConfig interface.
     return identidades.find(i => normalizeStr(i.nome) === normalizeStr(identName)) || identidades[0] || { nome: "Padrão", webhookUrl: "", tplLembrete: "", tplFeedback: "", tplRetencao: "", tplMensagem: "", tplReagendar: "" };
   };
 
@@ -138,13 +134,10 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     };
 
     return experimentais.filter(exp => {
-      // Regra 1: Se for Regente, filtra EXCLUSIVAMENTE por coincidência de escolaridade formatada com o nome do usuário
       if (isRegente) {
         const escolaridadeFormatada = formatEscolaridade(exp);
         if (normalizeStr(escolaridadeFormatada) !== regenteNameNorm) return false;
-      } 
-      // Regra 2: Se não for Master, aplica filtros de Unidade e Professor
-      else if (!isMaster) {
+      } else if (!isMaster) {
         if (isProfessor) {
           const belongsToMe = turmas.some(t => {
             const tProf = normalizeStr(t.professor).replace(/^prof\.?\s*/i, '');
@@ -155,32 +148,40 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
           return false;
         }
       }
-      
-      // Regra de data (comum a todos)
       return !selectedDate || String(exp.aula || '').split(' ')[0] === selectedDate;
     }).sort((a, b) => {
-      // 1. Ordenação por escolaridade (EI -> EF -> EM)
       const weightA = getEscolaridadeWeight(a);
       const weightB = getEscolaridadeWeight(b);
       if (weightA !== weightB) return weightA - weightB;
-
-      // 2. Dentro da mesma categoria, ordena pela string formatada (G2, G3, 1º ano, etc)
       const escA = formatEscolaridade(a);
       const escB = formatEscolaridade(b);
       if (escA !== escB) return escA.localeCompare(escB, undefined, { numeric: true });
-
-      // 3. Fallback: Ordenação por nome
       return a.estudante.localeCompare(b.estudante);
     });
   }, [experimentais, selectedDate, currentUser, isProfessor, isMaster, isRegente, turmas]);
 
-  const openComposeModal = (exp: AulaExperimental, isLembrete: boolean = false) => {
+  const openComposeModal = (exp: AulaExperimental, actionType: 'lembrete' | 'feedback' | 'reagendar') => {
     if (!canSendMessage) return;
     const identity = getIdentidadeForExp(exp);
-    const template = isLembrete ? identity.tplLembrete : identity.tplFeedback;
-    let msg = template || (isLembrete ? "Oi {{responsavel}}, lembrete da aula de {{estudante}} hoje!" : "Oi {{responsavel}}, como foi a aula de {{estudante}}?");
-    msg = msg.replace(/{{responsavel}}/gi, exp.responsavel1?.split(' ')[0] || "").replace(/{{estudante}}/gi, exp.estudante.split(' ')[0] || "").replace(/{{curso}}/gi, exp.curso).replace(/{{unidade}}/gi, exp.unidade).replace(/{{data}}/gi, exp.aula);
-    setMessageModal({ isOpen: true, exp, message: msg, identity });
+    
+    let template = "";
+    if (actionType === 'lembrete') template = identity.tplLembrete;
+    else if (actionType === 'reagendar') template = identity.tplReagendar;
+    else template = identity.tplFeedback;
+
+    let msg = template || (actionType === 'lembrete' ? "Oi {{responsavel}}, lembrete da aula de {{aluno}} hoje!" : actionType === 'reagendar' ? "Oi {{responsavel}}, vamos reagendar a aula de {{aluno}}?" : "Oi {{responsavel}}, como foi a aula de {{aluno}}?");
+    
+    const primeiroNomeEstudante = exp.estudante.split(' ')[0] || "";
+    
+    // Substituição robusta das tags dinâmicas
+    msg = msg.replace(/{{responsavel}}/gi, exp.responsavel1?.split(' ')[0] || "")
+             .replace(/{{estudante}}/gi, primeiroNomeEstudante)
+             .replace(/{{aluno}}/gi, primeiroNomeEstudante)
+             .replace(/{{curso}}/gi, exp.curso)
+             .replace(/{{unidade}}/gi, exp.unidade)
+             .replace(/{{data}}/gi, formatDateBR(exp.aula.split(' ')[0]));
+             
+    setMessageModal({ isOpen: true, exp, message: msg, identity, actionType });
   };
 
   const handleSendMessage = async () => {
@@ -193,7 +194,14 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
       } else if (fone) {
         window.open(`https://wa.me/55${fone}?text=${encodeURIComponent(messageModal.message)}`, '_blank');
       }
-      await onUpdate({ ...messageModal.exp, [messageModal.identity.tplLembrete === messageModal.message ? 'lembreteEnviado' : 'followUpSent']: true });
+
+      // DETERMINAÇÃO CORRETA DA COLUNA BASEADA NO TIPO DE AÇÃO DO MODAL
+      const updatedData: Partial<AulaExperimental> = { ...messageModal.exp };
+      if (messageModal.actionType === 'lembrete') updatedData.lembreteEnviado = true;
+      else if (messageModal.actionType === 'reagendar') updatedData.reagendarEnviado = true;
+      else updatedData.followUpSent = true;
+
+      await onUpdate(updatedData as AulaExperimental);
       setMessageModal({ ...messageModal, isOpen: false });
     } finally { setIsSending(false); }
   };
@@ -227,7 +235,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
       </div>
 
       <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden flex flex-col">
-        {/* Banner de Título */}
         <div className="px-10 py-8 bg-[#0f172a] text-white flex items-center gap-4">
           <div className="p-3 bg-blue-600/20 rounded-2xl border border-blue-500/30">
             <FlaskConical className="w-5 h-5 text-blue-400" />
@@ -235,7 +242,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
           <h3 className="text-xs font-black uppercase tracking-[0.2em]">Agenda Experimental</h3>
         </div>
 
-        {/* Lista de Experimentais */}
         <div className="divide-y divide-slate-50">
           {filteredExperimentais.length > 0 ? filteredExperimentais.map(exp => {
             const currentStatus = localChanges[exp.id]?.status || exp.status;
@@ -246,7 +252,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
             return (
               <div key={exp.id} className="group transition-all">
                 <div className="p-10 flex flex-col xl:flex-row xl:items-center justify-between gap-8">
-                  {/* Info Estudante */}
                   <div className="flex items-center gap-8 flex-1">
                     <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-lg shrink-0 transition-colors duration-500 ${avatarColor}`}>
                       {exp.estudante.charAt(0)}
@@ -264,7 +269,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                         <span className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 shadow-sm ${unitBadge}`}>
                           <MapPin className="w-3 h-3" /> {exp.unidade}
                         </span>
-                        {/* Selo de Escolaridade IMEDIATAMENTE após a Unidade */}
                         {escolaridade && (
                           <span className="px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 shadow-sm">
                             <GraduationCap className="w-3 h-3" /> {escolaridade}
@@ -277,18 +281,15 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                     </div>
                   </div>
 
-                  {/* Ações */}
                   <div className="flex items-center gap-4 flex-wrap">
-                    {/* Botão Lembrete */}
                     <button 
-                      onClick={() => openComposeModal(exp, true)} 
+                      onClick={() => openComposeModal(exp, 'lembrete')} 
                       disabled={exp.lembreteEnviado || !canSendMessage} 
                       className="px-6 py-3.5 rounded-2xl font-black text-[10px] uppercase border-2 border-amber-400 text-amber-500 bg-white hover:bg-amber-50 transition-all flex items-center gap-2 shadow-sm disabled:opacity-30 disabled:grayscale"
                     >
                       <Bell className="w-4 h-4" /> Lembrete
                     </button>
 
-                    {/* Botão Presença */}
                     <button 
                       onClick={() => isProfessor && setLocalChanges(prev => ({ ...prev, [exp.id]: { ...prev[exp.id], status: 'Presente' }}))} 
                       className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all ${
@@ -300,7 +301,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       <CheckCircle2 className="w-6 h-6" />
                     </button>
 
-                    {/* Botão Ausência */}
                     <button 
                       onClick={() => isProfessor && setLocalChanges(prev => ({ ...prev, [exp.id]: { ...prev[exp.id], status: 'Ausente' }}))} 
                       className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all ${
@@ -312,7 +312,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       <XCircle className="w-6 h-6" />
                     </button>
 
-                    {/* Botão Detalhes */}
                     <button 
                       onClick={() => setExpandedId(expandedId === exp.id ? null : exp.id)} 
                       className="bg-[#0f172a] text-white px-8 py-3.5 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
@@ -322,7 +321,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                   </div>
                 </div>
 
-                {/* Painel Expandido */}
                 {expandedId === exp.id && (
                   <div className="px-10 pb-12 space-y-8 animate-in slide-in-from-top-4 duration-300">
                     <div className="bg-slate-50 p-10 rounded-[32px] border-2 border-slate-100 space-y-6">
@@ -350,7 +348,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <button 
-                        onClick={() => openComposeModal(exp)} 
+                        onClick={() => openComposeModal(exp, 'feedback')} 
                         disabled={exp.followUpSent || !canSendMessage} 
                         className="bg-emerald-600 text-white py-6 rounded-[24px] font-black text-sm uppercase flex items-center justify-center gap-4 shadow-xl hover:bg-emerald-700 transition-all disabled:opacity-50"
                       >
@@ -359,9 +357,9 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
                       
                       {!exp.convertido && exp.status === 'Ausente' && (
                         <button 
-                          onClick={() => openComposeModal(exp)} 
+                          onClick={() => openComposeModal(exp, 'reagendar')} 
                           disabled={exp.reagendarEnviado || !canSendMessage}
-                          className="bg-amber-50 text-white py-6 rounded-[24px] font-black text-sm uppercase flex items-center justify-center gap-4 shadow-xl hover:bg-amber-600 transition-all disabled:opacity-50"
+                          className="bg-amber-500 text-white py-6 rounded-[24px] font-black text-sm uppercase flex items-center justify-center gap-4 shadow-xl hover:bg-amber-600 transition-all disabled:opacity-50"
                         >
                           <RotateCcw className="w-6 h-6" /> Propor Reagendamento
                         </button>
@@ -380,7 +378,6 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
         </div>
       </div>
 
-      {/* Modal Whatsapp */}
       {messageModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white w-full max-w-md rounded-[44px] shadow-2xl p-12 border border-slate-100">
@@ -393,6 +390,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
             <div className="mb-6 space-y-1">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">IDENTIDADE DE CANAL</p>
               <p className="text-xs font-black text-blue-600 uppercase">{messageModal.identity?.nome || 'PADRÃO'}</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">TIPO: {messageModal.actionType.toUpperCase()}</p>
             </div>
             <textarea 
               value={messageModal.message} 
