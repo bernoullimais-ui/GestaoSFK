@@ -10,7 +10,7 @@ Este script permite que o aplicativo leia dados de alunos, turmas, frequências 
 3. Clique em **Implantar** > **Gerenciar implantações** > **Editar** (ícone de lápis) > **Nova Versão**.
 4. Certifique-se de que o acesso continua como "Qualquer pessoa".
 
-## 2. Código do Script (Versão 3.1 com Auditoria de Frequência)
+## 2. Código do Script (Versão 3.4 - Cancelamento Específico)
 
 ```javascript
 function doGet(e) {
@@ -34,7 +34,7 @@ function doGet(e) {
   var sheetExperimental = findSheetSmart(["experimental", "leads", "aula exp"]);
   var sheetFreq = findSheetSmart(["frequencia", "chamada", "presenca"]);
   var sheetConfig = findSheetSmart(["config", "parametros", "ajustes", "setup"]);
-  var sheetUnidades = findSheetSmart(["unidade", "escolas", "unid"]); // Nova Aba
+  var sheetUnidades = findSheetSmart(["unidade", "escolas", "unid"]);
 
   var result = {
     base: getSheetDataWithRecovery(sheetBase),
@@ -43,7 +43,7 @@ function doGet(e) {
     experimental: getSheetDataWithRecovery(sheetExperimental),
     frequencia: getSheetDataWithRecovery(sheetFreq),
     configuracoes: getSheetDataWithRecovery(sheetConfig),
-    unidadesMapping: getSheetDataWithRecovery(sheetUnidades), // Adicionado ao retorno
+    unidadesMapping: getSheetDataWithRecovery(sheetUnidades),
     status: "OK",
     timestamp: new Date().getTime()
   };
@@ -59,7 +59,60 @@ function doPost(e) {
     var data = contents.data;
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     
-    if (action === "save_experimental") {
+    if (action === "save_aluno") {
+      var sheet = ss.getSheetByName("BASE") || findSheetSmart(["base", "aluno", "estudante"]);
+      var rows = sheet.getDataRange().getValues();
+      var headers = rows[0].map(function(h) { return normalizeText(h).replace(/[^a-z0-9]/g, ""); });
+      
+      var colEstudante = headers.indexOf("estudante") === -1 ? headers.indexOf("nome") : headers.indexOf("estudante");
+      var colUnidade = headers.indexOf("unidade") === -1 ? headers.indexOf("escola") : headers.indexOf("unidade");
+      var colTurma = headers.indexOf("turma") === -1 ? headers.indexOf("curso") : headers.indexOf("turma");
+      
+      var mappings = {
+        nome: colEstudante,
+        unidade: colUnidade,
+        dataNascimento: headers.indexOf("nascimento") === -1 ? headers.indexOf("datanascimento") : headers.indexOf("nascimento"),
+        email: headers.indexOf("email"),
+        responsavel1: headers.indexOf("responsavel1"),
+        whatsapp1: headers.indexOf("whatsapp1"),
+        responsavel2: headers.indexOf("responsavel2"),
+        whatsapp2: headers.indexOf("whatsapp2"),
+        etapa: headers.indexOf("etapa") === -1 ? headers.indexOf("estagioanoescolar") : headers.indexOf("etapa"),
+        turmaEscolar: headers.indexOf("turmaescolar"),
+        statusMatricula: headers.indexOf("status"),
+        dataMatricula: headers.indexOf("dtmatricula") === -1 ? headers.indexOf("datamatricula") : headers.indexOf("dtmatricula"),
+        dataCancelamento: (headers.indexOf("dtcancelamento") !== -1) ? headers.indexOf("dtcancelamento") : headers.indexOf("datacancelamento")
+      };
+
+      var targetCurso = data._targetCurso;
+
+      for (var i = 1; i < rows.length; i++) {
+        var rowName = normalizeText(rows[i][colEstudante]);
+        var rowUnit = normalizeText(rows[i][colUnidade]);
+        var rowTurma = normalizeText(rows[i][colTurma]);
+
+        if (rowName === normalizeText(data._originalNome) && rowUnit === normalizeText(data._originalUnidade)) {
+          
+          // Se houver um targetCurso, cancelamos apenas a linha que coincide com o curso
+          if (targetCurso && normalizeText(targetCurso) !== rowTurma) {
+            continue;
+          }
+
+          for (var key in data) {
+            if (key.indexOf("_") === 0) continue; 
+            var colIdx = mappings[key];
+            if (colIdx !== undefined && colIdx !== -1) {
+              sheet.getRange(i + 1, colIdx + 1).setValue(data[key]);
+            }
+          }
+          
+          // Se for cancelamento específico ou edição comum, interrompe após processar a linha alvo
+          if (targetCurso || data.statusMatricula !== 'Cancelado') break;
+        }
+      }
+    }
+    
+    else if (action === "save_experimental") {
       var sheet = ss.getSheetByName("EXPERIMENTAL") || findSheetSmart(["experimental", "leads", "aula exp"]);
       var rows = sheet.getDataRange().getValues();
       var headers = rows[0].map(function(h) { return normalizeText(h).replace(/[^a-z0-9]/g, ""); });
@@ -98,7 +151,6 @@ function doPost(e) {
       }
       
       var rows = sheet.getDataRange().getValues();
-      // Mapeamento de colunas: A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7
       var colAluno = 0, colUnidade = 1, colTurma = 2, colData = 3, colStatus = 4, colObs = 5, colAlarme = 6, colTimestamp = 7;  
 
       if (Array.isArray(data)) {

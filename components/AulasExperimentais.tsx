@@ -46,7 +46,7 @@ const getUnidadeBadgeStyle = (unidade: string) => {
   if (u.includes('AKA')) return 'bg-blue-50 text-blue-600 border-blue-100';
   if (u.includes('BUNNY')) return 'bg-purple-50 text-purple-600 border-purple-100';
   if (u.includes('LICEU')) return 'bg-emerald-50 text-emerald-600 border-emerald-100';
-  if (u.includes('PEDRINHO')) return 'bg-amber-50 text-amber-700 border-amber-100';
+  if (u.includes('PEDRINHO')) return 'bg-amber-50 text-amber-700 border-amber-200';
   if (u.includes('OFICINA')) return 'bg-rose-50 text-rose-600 border-rose-100';
   return 'bg-slate-50 text-slate-500 border-slate-100';
 };
@@ -102,7 +102,7 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     // Lista de valores que não devem ser exibidos como turma
     const invalidClasses = ['NAO SEI', 'NÃO SEI', '', 'TURMA'];
     if (turma && !invalidClasses.includes(turma.toUpperCase())) {
-      // Só concatena se a etapa já não terminar com a letra da turma (prevenção de duplicidade)
+      // Só concatena se a etapa já não terminar with a letra da turma (prevenção de duplicidade)
       const lastChar = etapa.split(' ').pop();
       if (lastChar !== turma.toUpperCase()) {
         result = `${etapa} ${turma.toUpperCase()}`;
@@ -120,7 +120,8 @@ const AulasExperimentais: React.FC<AulasExperimentaisProps> = ({
     }
     const matchingTurma = turmas.find(t => normalizeStr(t.nome) === normalizeStr(exp.curso) && normalizeStr(t.unidade) === normalizeStr(exp.unidade));
     const identName = matchingTurma?.identidade || "";
-    return identidades.find(i => normalizeStr(i.nome) === normalizeStr(identName)) || identidades[0] || { nome: "Padrão", webhookUrl: "", tplLembrete: "", tplFeedback: "", tplRetencao: "", tplMessage: "", tplReagendar: "" };
+    // Fix: Corrected property name tplMessage to tplMensagem to match IdentidadeConfig interface.
+    return identidades.find(i => normalizeStr(i.nome) === normalizeStr(identName)) || identidades[0] || { nome: "Padrão", webhookUrl: "", tplLembrete: "", tplFeedback: "", tplRetencao: "", tplMensagem: "", tplReagendar: "" };
   };
 
   const filteredExperimentais = useMemo(() => {
