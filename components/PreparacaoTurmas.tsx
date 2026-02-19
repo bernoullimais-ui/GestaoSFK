@@ -225,69 +225,69 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
   const labelDiaAtivo = diasSemana.find(d => d.id === filtroDia)?.label || 'Hoje';
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+    <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500 pb-20 max-w-7xl mx-auto p-4 md:p-0">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
         <div className="space-y-1">
-          <h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase leading-none">Preparação</h2>
-          <p className="text-slate-500 font-medium text-sm">
-            {isProfessor ? 'Listagem dos meus alunos para saída escolar.' : `Listagem de estudantes - Unidade: ${isMaster ? 'Global' : currentUser.unidade}`}
+          <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tighter uppercase leading-none">Preparação</h2>
+          <p className="text-slate-500 font-medium text-[10px] md:text-sm">
+            {isProfessor ? 'Minha listagem para saída escolar.' : `Estudantes - ${isMaster ? 'Gestão Global' : currentUser.unidade}`}
           </p>
         </div>
       </div>
 
-      <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+      <div className="bg-white p-4 md:p-10 rounded-[24px] md:rounded-[40px] shadow-sm border border-slate-100">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-10">
           <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">
+            <label className="block text-[8px] md:text-[10px] font-black text-slate-400 uppercase mb-2 md:mb-4 ml-1 tracking-widest">
               SIGLA ESCOLAR / ESCOLARIDADE
             </label>
             <div className="relative group">
-              <BookOpen className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-500" />
+              <BookOpen className="absolute left-4 md:left-6 top-1/2 -translate-y-1/2 w-4 md:w-5 h-4 md:h-5 text-indigo-500" />
               <select 
                 value={filtroSigla}
                 onChange={(e) => setFiltroSigla(e.target.value)}
                 disabled={isRegente}
-                className={`w-full pl-14 pr-12 py-5 border-2 rounded-3xl outline-none transition-all font-black text-sm appearance-none cursor-pointer ${
+                className={`w-full pl-10 md:pl-14 pr-8 md:pr-12 py-3 md:py-5 border-2 rounded-xl md:rounded-3xl outline-none transition-all font-black text-xs md:text-sm appearance-none cursor-pointer ${
                   isRegente ? 'bg-slate-50 border-slate-50 text-indigo-600' : 'bg-slate-50 border-slate-100 text-slate-700 focus:border-indigo-600'
-                } ${filtroSigla ? 'border-indigo-600 ring-4 ring-indigo-50' : ''}`}
+                } ${filtroSigla ? 'border-indigo-600 ring-2 md:ring-4 ring-indigo-50' : ''}`}
               >
-                {!isRegente && <option value="">🌟 EXIBIR TODAS AS MINHAS SIGLAS</option>}
+                {!isRegente && <option value="">🌟 TODAS AS MINHAS SIGLAS</option>}
                 {siglasExistentes.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              {!isRegente && <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />}
-              {isRegente && <Lock className="absolute right-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />}
+              {!isRegente && <ChevronDown className="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 w-4 md:w-5 h-4 md:h-5 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />}
+              {isRegente && <Lock className="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 w-3 md:w-4 h-3 md:h-4 text-slate-300" />}
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase mb-4 ml-1 tracking-widest">
+            <label className="block text-[8px] md:text-[10px] font-black text-slate-400 uppercase mb-2 md:mb-4 ml-1 tracking-widest">
               DIA DA SEMANA
             </label>
             <div className="relative group">
-              <Calendar className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-400" />
+              <Calendar className="absolute left-4 md:left-6 top-1/2 -translate-y-1/2 w-4 md:w-5 h-4 md:h-5 text-indigo-400" />
               <select 
                 value={filtroDia}
                 onChange={(e) => setFiltroDia(e.target.value)}
-                className="w-full pl-14 pr-12 py-5 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-600 outline-none transition-all font-black text-sm appearance-none cursor-pointer text-slate-700"
+                className="w-full pl-10 md:pl-14 pr-8 md:pr-12 py-3 md:py-5 bg-slate-50 border-2 border-slate-100 rounded-xl md:rounded-2xl focus:border-indigo-600 outline-none transition-all font-black text-xs md:text-sm appearance-none cursor-pointer text-slate-700"
               >
                 {diasSemana.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
               </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 md:w-5 h-4 md:h-5 text-slate-400 pointer-events-none" />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-[40px] shadow-sm border border-slate-100 overflow-hidden min-h-[500px] flex flex-col">
-        <div className="px-10 py-8 bg-[#0f172a] text-white flex items-center justify-between">
+      <div className="bg-white rounded-[24px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden min-h-[300px] flex flex-col">
+        <div className="px-6 py-4 md:px-10 md:py-8 bg-[#0f172a] text-white flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-2">Estudantes Localizados</h3>
-            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
+            <h3 className="text-sm md:text-xl font-black uppercase tracking-tight leading-none mb-1 md:mb-2">Estudantes</h3>
+            <p className="text-slate-400 text-[8px] md:text-[10px] font-black uppercase tracking-widest">
               {labelDiaAtivo}
             </p>
           </div>
-          <div className="bg-indigo-600 px-5 py-2.5 rounded-2xl border border-indigo-500 shadow-lg flex items-center gap-3">
-             <span className="text-xs font-black uppercase">{studentsToPrepare.length} Alunos</span>
+          <div className="bg-indigo-600 px-3 py-1.5 md:px-5 md:py-2.5 rounded-xl md:rounded-2xl border border-indigo-500 shadow-lg flex items-center gap-2">
+             <span className="text-[10px] md:text-xs font-black uppercase">{studentsToPrepare.length} Alunos</span>
           </div>
         </div>
 
@@ -295,25 +295,25 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
           {studentsToPrepare.length > 0 ? (
             <div className="divide-y divide-slate-100">
               {studentsToPrepare.map((item, idx) => (
-                <div key={idx} className="px-10 py-8 grid grid-cols-12 gap-6 items-center hover:bg-slate-50/50 transition-colors">
-                  <div className="col-span-7 space-y-2">
-                    <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter leading-none">{item.aluno.nome}</h4>
-                    <div className="flex items-center gap-3">
-                       <span className="bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter">
+                <div key={idx} className="px-6 py-4 md:px-10 md:py-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <h4 className="text-sm md:text-xl font-black text-slate-800 uppercase tracking-tight leading-tight truncate">{item.aluno.nome}</h4>
+                    <div className="flex items-center gap-2 flex-wrap">
+                       <span className="bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-lg text-[8px] md:text-[10px] font-black uppercase tracking-tighter">
                          {item.sigla || 'S/S'}
                        </span>
-                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shadow-sm ${getUnidadeStyle(item.aluno.unidade)}`}>
+                       <span className={`text-[8px] md:text-[9px] font-black uppercase px-2 py-0.5 rounded border shadow-sm ${getUnidadeStyle(item.aluno.unidade)}`}>
                          {item.aluno.unidade}
                        </span>
                     </div>
                   </div>
-                  <div className="col-span-5 flex flex-wrap gap-3">
+                  <div className="flex flex-wrap gap-2">
                     {item.turmas.map((t: Turma, tIdx: number) => (
-                      <div key={tIdx} className="bg-emerald-50 border border-emerald-100 px-5 py-3 rounded-2xl flex items-center gap-4">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <div key={tIdx} className="bg-emerald-50 border border-emerald-100 px-3 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl flex items-center gap-3">
+                        <div className="w-1.5 md:w-2.5 h-1.5 md:h-2.5 rounded-full bg-emerald-500" />
                         <div className="flex flex-col">
-                          <span className="text-sm font-black text-emerald-900 uppercase leading-none mb-1">{t.nome}</span>
-                          <span className="text-[9px] font-black text-emerald-600/70 uppercase tracking-widest leading-none">{t.horario}</span>
+                          <span className="text-[10px] md:text-sm font-black text-emerald-900 uppercase leading-none mb-0.5 md:mb-1">{t.nome}</span>
+                          <span className="text-[7px] md:text-[9px] font-black text-emerald-600/70 uppercase tracking-widest leading-none">{t.horario}</span>
                         </div>
                       </div>
                     ))}
@@ -322,14 +322,14 @@ const PreparacaoTurmas: React.FC<PreparacaoTurmasProps> = ({ alunos, turmas, mat
               ))}
             </div>
           ) : (
-            <div className="py-40 text-center flex flex-col items-center justify-center space-y-6">
-              <div className="w-24 h-24 bg-slate-50 rounded-[40px] flex items-center justify-center shadow-inner">
-                <AlertCircle className="w-10 h-10 text-slate-200" />
+            <div className="py-20 md:py-40 text-center flex flex-col items-center justify-center space-y-4 md:space-y-6">
+              <div className="w-16 h-16 md:w-24 md:h-24 bg-slate-50 rounded-[32px] md:rounded-[40px] flex items-center justify-center shadow-inner">
+                <AlertCircle className="w-8 h-8 md:w-10 md:h-10 text-slate-200" />
               </div>
-              <div className="max-w-md mx-auto">
-                <h4 className="text-2xl font-black text-slate-300 uppercase tracking-tighter mb-2">Nenhum estudante localizado</h4>
-                <p className="text-slate-300 text-[11px] font-black uppercase tracking-widest px-10 text-center">
-                  Não localizamos aulas nas turmas permitidas para este dia.
+              <div className="max-w-md mx-auto px-4">
+                <h4 className="text-base md:text-2xl font-black text-slate-300 uppercase tracking-tighter mb-1 md:mb-2">Nenhum estudante localizado</h4>
+                <p className="text-slate-300 text-[9px] md:text-[11px] font-black uppercase tracking-widest text-center">
+                  Não localizamos aulas para este dia e sigla selecionados.
                 </p>
               </div>
             </div>
