@@ -135,12 +135,21 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
     ).sort((a, b) => a.nome.localeCompare(b.nome));
   }, [selectedTurmaId, matriculas, alunos, turmas, buscaAluno]);
 
+  // EFEITO CRÍTICO: Carrega presenças existentes da planilha
   useEffect(() => {
     if (selectedTurmaId && data) {
       const currentContext = `${selectedTurmaId}|${data}`;
       
       if (lastLoadedContext.current !== currentContext) {
-        const chamadasExistentes = presencas.filter(p => normalize(p.turmaId) === normalize(selectedTurmaId) && p.data === data);
+        const targetTurma = turmas.find(t => t.id === selectedTurmaId);
+        const tNomeNorm = targetTurma ? normalize(targetTurma.nome) : '';
+        const tIdNorm = normalize(selectedTurmaId);
+
+        // Busca chamadas que batem com a data e com a turma (ID ou Nome)
+        const chamadasExistentes = presencas.filter(p => {
+          const pTurmaIdNorm = normalize(p.turmaId);
+          return p.data === data && (pTurmaIdNorm === tIdNorm || pTurmaIdNorm === tNomeNorm);
+        });
         
         if (chamadasExistentes.length > 0) {
           setIsEditMode(true);
@@ -148,15 +157,24 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
           const newNotes: Record<string, string> = {};
           let aulaNoteFound = '';
           
-          chamadasExistentes.forEach(p => {
-            newMarked[p.alunoId] = p.status as 'Presente' | 'Ausente';
-            if (p.observacao) {
-              const obs = p.observacao;
-              const matchAula = obs.match(/\[Aula: (.*?)\]/);
-              const matchAluno = obs.match(/\[Aluno: (.*?)\]/);
-              if (matchAula && !aulaNoteFound) aulaNoteFound = matchAula[1];
-              if (matchAluno) newNotes[p.alunoId] = matchAluno[1];
-              else if (!matchAula) newNotes[p.alunoId] = obs;
+          // Mapeia os registros encontrados para os IDs dos alunos atuais
+          alunosMatriculados.forEach(aluno => {
+            const registroParaEsteAluno = chamadasExistentes.find(p => normalize(p.alunoId) === normalize(aluno.nome));
+            
+            if (registroParaEsteAluno) {
+              newMarked[aluno.id] = registroParaEsteAluno.status as 'Presente' | 'Ausente';
+              
+              if (registroParaEsteAluno.observacao) {
+                const obs = registroParaEsteAluno.observacao;
+                const matchAula = obs.match(/\[Aula: (.*?)\]/);
+                const matchAluno = obs.match(/\[Aluno: (.*?)\]/);
+                if (matchAula && !aulaNoteFound) aulaNoteFound = matchAula[1];
+                if (matchAluno) newNotes[aluno.id] = matchAluno[1];
+                else if (!matchAula) newNotes[aluno.id] = obs;
+              }
+            } else {
+              // Se o aluno está na turma mas não tem registro na data, assume presente por padrão
+              newMarked[aluno.id] = 'Presente';
             }
           });
           
@@ -164,6 +182,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
           setStudentNotes(newNotes);
           setObservacaoAula(aulaNoteFound);
         } else {
+          // Reset para nova chamada
           setIsEditMode(false);
           const initial: Record<string, 'Presente' | 'Ausente'> = {};
           alunosMatriculados.forEach(aluno => { initial[aluno.id] = 'Presente'; });
@@ -174,8 +193,15 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
         }
         lastLoadedContext.current = currentContext;
       }
+    } else {
+      // Limpa estados se não houver turma selecionada
+      setMarkedPresencas({});
+      setStudentNotes({});
+      setObservacaoAula('');
+      setIsEditMode(false);
+      lastLoadedContext.current = '';
     }
-  }, [selectedTurmaId, data, presencas, alunosMatriculados.length]);
+  }, [selectedTurmaId, data, presencas, alunosMatriculados.length, turmas]);
 
   const handleTogglePresenca = (alunoId: string, status: 'Presente' | 'Ausente') => {
     setMarkedPresencas(prev => ({ ...prev, [alunoId]: status }));
@@ -202,8 +228,8 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
 
       return {
         id: Math.random().toString(36).substr(2, 9),
-        alunoId: aluno.nome,
-        turmaId: selectedTurma?.nome || selectedTurmaId,
+        alunoId: aluno.nome, // Importante: a planilha espera o nome
+        turmaId: selectedTurma?.nome || selectedTurmaId, // A planilha espera o nome
         unidade: selectedTurma?.unidade || currentUser.unidade,
         data,
         status: status,
@@ -212,7 +238,7 @@ const Frequencia: React.FC<FrequenciaProps> = ({ turmas, alunos, matriculas, pre
       };
     });
 
-    lastLoadedContext.current = '';
+    lastLoadedContext.current = ''; // Reseta contexto para forçar recarregamento após salvar
     onSave(records);
     setIsSuccess(true);
     setTimeout(() => setIsSuccess(false), 3000);
