@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { 
   AlertTriangle, 
@@ -100,15 +99,10 @@ const ChurnRiskManagement: React.FC<ChurnRiskManagementProps> = ({
   const openComposeModal = (alerta: any) => {
     const identity = getIdentidadeForCurso(alerta.cursoNome, alerta.unidade);
     let msg = identity.tplRetencao || "Olá {{responsavel}}, notamos que {{estudante}} faltou. Está tudo bem?";
-    
-    const primeiroNomeAluno = alerta.aluno.nome.split(' ')[0] || "";
-    
     msg = msg.replace(/{{responsavel}}/gi, (alerta.aluno.responsavel1 || alerta.aluno.nome).split(' ')[0])
-             .replace(/{{estudante}}/gi, primeiroNomeAluno)
-             .replace(/{{aluno}}/gi, primeiroNomeAluno)
+             .replace(/{{estudante}}/gi, alerta.aluno.nome.split(' ')[0])
              .replace(/{{unidade}}/gi, alerta.unidade)
              .replace(/{{curso}}/gi, alerta.cursoNome);
-             
     setMessageModal({ isOpen: true, alerta, message: msg, identity });
   };
 

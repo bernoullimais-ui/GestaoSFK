@@ -89,14 +89,9 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({ alunos, turmas, matriculas, u
   const openMessageModal = (aluno: Aluno, phone: string, responsavel: string) => {
     const identity = getIdentidadeForAluno(aluno);
     let msg = identity.tplMensagem || "Olá {{responsavel}}, gostaríamos de falar sobre {{estudante}}.";
-    
-    const primeiroNomeAluno = aluno.nome.split(' ')[0] || "";
-    
     msg = msg.replace(/{{responsavel}}/gi, responsavel.split(' ')[0])
-             .replace(/{{estudante}}/gi, primeiroNomeAluno)
-             .replace(/{{aluno}}/gi, primeiroNomeAluno)
+             .replace(/{{estudante}}/gi, aluno.nome.split(' ')[0])
              .replace(/{{unidade}}/gi, aluno.unidade);
-             
     setMessageModal({ isOpen: true, aluno, phone, responsavel, message: msg, identity });
   };
 
@@ -213,7 +208,7 @@ const DadosAlunos: React.FC<DadosAlunosProps> = ({ alunos, turmas, matriculas, u
             </div>
           </div>
           <div className="bg-emerald-50 px-6 py-4 rounded-3xl border border-emerald-100 shadow-sm">
-            <p className="text-[10px] font-black text-emerald-600/60 uppercase tracking-widest mb-1">Ativos</p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ativos</p>
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-emerald-600" />
               <span className="text-xl font-black text-emerald-700">{stats.ativos}</span>
